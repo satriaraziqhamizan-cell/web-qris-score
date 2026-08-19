@@ -1,0 +1,1476 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+<title>QRIS-SCORE — Dashboard Lembaga Keuangan (Web)</title>
+<meta name="description" content="Purwarupa interaktif QRIS-SCORE." />
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+
+<!-- Tailwind (Play CDN) — hanya untuk styling, tidak menyentuh file lokal sama sekali -->
+<script src="https://cdn.tailwindcss.com"></script>
+
+<!-- jsPDF (untuk fitur ekspor laporan PDF) -->
+<script src="https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+
+<style>
+  html, body, #app-root { height: 100%; }
+  body { -webkit-font-smoothing: antialiased; background: var(--page-bg); margin: 0; font-family: Inter, sans-serif; color: var(--ink); }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 8px; }
+
+  :root { --page-bg: #f4f6f9; --surface: #ffffff; --border: #e2e8f0; --ink: #0f1c3f; --muted: #64748b; }
+  html.dark { --page-bg: #0b1120; --surface: #141d33; --border: #2a3654; --ink: #eef2fb; --muted: #a9b6d6; }
+  html.dark ::-webkit-scrollbar-thumb { background: #3a4666; }
+
+  @keyframes pulseCell { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+  @keyframes loadBar { from { width: 0%; } to { width: 100%; } }
+  @keyframes fadeIn { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
+  input[type="range"] { accent-color: #d97706; }
+  #toast { display:none; position:fixed; bottom:96px; left:50%; transform:translateX(-50%); z-index:100;
+    background:#0f1c3f; color:#fff; font-size:14px; padding:10px 16px; border-radius:12px; box-shadow:0 10px 25px rgba(0,0,0,.2);
+    align-items:center; gap:8px; animation: fadeIn .2s ease; }
+  @media (min-width: 768px) { #toast { bottom: 24px; } }
+  @media print { .no-print { display: none !important; } }
+</style>
+</head>
+<body>
+  <div id="app-root"></div>
+  <div id="toast"></div>
+
+  <!-- Semua kode di bawah adalah VANILLA JAVASCRIPT BIASA (bukan JSX, tidak
+       butuh Babel/React). Ini sengaja dipilih supaya bisa dibuka langsung
+       dobel-klik dari file:// tanpa server lokal dan tanpa risiko gagal
+       transpile di browser. -->
+  <script>
+/* ============================================================
+   QRIS-SCORE — Data & Scoring Engine
+   Formula & bobot sesuai KTI "QRIS-SCORE: Rancang Bangun Model
+   dan Purwarupa Aplikasi Alternative Credit Scoring..." (Jambi Spark 2026)
+   Sub-bab 4.2.1 & 4.2.2.
+
+   CATATAN JUJUR: 6 dari 10 UMKM di bawah adalah data representatif
+   yang benar-benar tercantum di Tabel 4.3 KTI. 4 UMKM lain (ditandai
+   isExtension:true) adalah data dummy tambahan yang kami susun sendiri
+   mengikuti pola & rentang yang sama, karena dataset lengkap 10 UMKM
+   (Lampiran A/B) tidak turut disertakan dalam draf yang kami terima.
+   Semua tetap fiktif, tidak merujuk entitas nyata mana pun.
+   ============================================================ */
+
+(function (global) {
+  const RAW_UMKM = [
+    { id: "umkm-01", nama: "Kedai Kopi Tungkal", jenisUsaha: "Kedai Kopi", freq: 1150, nominal: 42500000, growth: 12.4, cv: 0.18, isExtension: false },
+    { id: "umkm-02", nama: "Kedai Roti Bakar 46", jenisUsaha: "Kedai Roti", freq: 860, nominal: 31400000, growth: 6.1, cv: 0.24, isExtension: false },
+    { id: "umkm-03", nama: "Nasi Gemuk Kito", jenisUsaha: "Warung Nasi", freq: 720, nominal: 29000000, growth: 9.5, cv: 0.26, isExtension: true },
+    { id: "umkm-04", nama: "Soto Jambi Pak Har", jenisUsaha: "Warung Soto", freq: 640, nominal: 27600000, growth: 15.3, cv: 0.29, isExtension: false },
+    { id: "umkm-05", nama: "Mie Celor Batanghari", jenisUsaha: "Warung Mie", freq: 500, nominal: 21000000, growth: 7.0, cv: 0.33, isExtension: true },
+    { id: "umkm-06", nama: "Ayam Geprek Melayu", jenisUsaha: "Ayam Geprek", freq: 430, nominal: 18900000, growth: 4.8, cv: 0.35, isExtension: false },
+    { id: "umkm-07", nama: "Dapur Gulai Ikan Patin", jenisUsaha: "Warung Gulai", freq: 310, nominal: 13700000, growth: 2.2, cv: 0.46, isExtension: false },
+    { id: "umkm-08", nama: "Sate Kere Simpang", jenisUsaha: "Sate", freq: 260, nominal: 10500000, growth: 1.0, cv: 0.55, isExtension: true },
+    { id: "umkm-09", nama: "Kopi Talang Rimba", jenisUsaha: "Kedai Kopi", freq: 190, nominal: 8200000, growth: -1.5, cv: 0.68, isExtension: true },
+    { id: "umkm-10", nama: "Es Kacang Merah Jambi", jenisUsaha: "Minuman", freq: 150, nominal: 6400000, growth: -3.0, cv: 0.85, isExtension: false },
+  ];
+
+  // Riwayat transaksi dummy 6 bulan terakhir (untuk grafik tren), dibangkitkan
+  // secara proporsional terhadap nilai bulan berjalan + variasi kecil per UMKM.
+  function buildHistory(base, growth, seed) {
+    const months = ["Feb", "Mar", "Apr", "Mei", "Jun", "Jul"];
+    let val = base / Math.pow(1 + growth / 100, 5);
+    return months.map((m, i) => {
+      const noise = 1 + (Math.sin(seed + i * 1.7) * 0.06);
+      val = val * (1 + growth / 100) * noise;
+      return { bulan: m, omzet: Math.round(val), transaksi: Math.round((val / (base / (base > 0 ? base : 1))) || 0) };
+    });
+  }
+
+  function minMax(arr) {
+    return { min: Math.min(...arr), max: Math.max(...arr) };
+  }
+
+  function normalize(x, min, max) {
+    if (max === min) return 100;
+    return ((x - min) / (max - min)) * 100;
+  }
+
+  function normalizeInverse(x, min, max) {
+    if (max === min) return 100;
+    return 100 - ((x - min) / (max - min)) * 100;
+  }
+
+  function kategoriSkor(s) {
+    if (s >= 70) return { label: "Layak Tinggi", color: "tinggi" };
+    if (s >= 40) return { label: "Layak Bersyarat", color: "bersyarat" };
+    return { label: "Belum Layak", color: "belum" };
+  }
+
+  /**
+   * Menghitung skor komposit seluruh UMKM secara live berdasarkan bobot yang
+   * diberikan. weights = { w1, w2, w3 } dalam skala 0-1 dan harus berjumlah 1.
+   * omzetSplit = { nominal: 0.7, growth: 0.3 } (bagian dari X2, Sub-bab 4.2.2).
+   */
+  function computeAll(weights, omzetSplit) {
+    weights = weights || { w1: 0.25, w2: 0.5, w3: 0.25 };
+    omzetSplit = omzetSplit || { nominal: 0.7, growth: 0.3 };
+
+    const freqRange = minMax(RAW_UMKM.map((u) => u.freq));
+    const nomRange = minMax(RAW_UMKM.map((u) => u.nominal));
+    const growthRange = minMax(RAW_UMKM.map((u) => u.growth));
+    const cvRange = minMax(RAW_UMKM.map((u) => u.cv));
+
+    return RAW_UMKM.map((u, idx) => {
+      const x1norm = normalize(u.freq, freqRange.min, freqRange.max);
+      const omzetNorm = normalize(u.nominal, nomRange.min, nomRange.max);
+      const growthNorm = normalize(u.growth, growthRange.min, growthRange.max);
+      const x2norm = omzetSplit.nominal * omzetNorm + omzetSplit.growth * growthNorm;
+      const x3norm = normalizeInverse(u.cv, cvRange.min, cvRange.max);
+
+      const S = weights.w1 * x1norm + weights.w2 * x2norm + weights.w3 * x3norm;
+      const kategori = kategoriSkor(S);
+      const history = buildHistory(u.nominal, u.growth, idx * 3.1);
+
+      return {
+        ...u,
+        x1norm: Number(x1norm.toFixed(1)),
+        omzetNorm: Number(omzetNorm.toFixed(1)),
+        growthNorm: Number(growthNorm.toFixed(1)),
+        x2norm: Number(x2norm.toFixed(1)),
+        x3norm: Number(x3norm.toFixed(1)),
+        skor: Number(S.toFixed(1)),
+        kategori: kategori.label,
+        kategoriColor: kategori.color,
+        history,
+        ranges: { freqRange, nomRange, growthRange, cvRange },
+      };
+    }).sort((a, b) => b.skor - a.skor);
+  }
+
+  function formatRupiah(n) {
+    return "Rp" + Math.round(n).toLocaleString("id-ID");
+  }
+
+  function rekomendasi(u) {
+    const list = [];
+    if (u.x1norm < 70) list.push({ id: "r1", text: "Jaga transaksi harian tetap rutin agar frekuensi transaksi meningkat.", done: u.x1norm >= 50 });
+    else list.push({ id: "r1", text: "Frekuensi transaksi sudah baik — pertahankan pola transaksi harian.", done: true });
+
+    if (u.growthNorm < 60) list.push({ id: "r2", text: "Hindari penurunan omzet drastis dari bulan ke bulan, jaga tren tumbuh stabil.", done: u.growthNorm >= 50 });
+    else list.push({ id: "r2", text: "Pertumbuhan omzet bulanan sudah menunjukkan tren positif.", done: true });
+
+    if (u.x3norm < 70) list.push({ id: "r3", text: "Kurangi fluktuasi nominal transaksi antar hari agar arus kas lebih stabil (CV lebih rendah).", done: u.x3norm >= 50 });
+    else list.push({ id: "r3", text: "Konsistensi arus kas tergolong stabil — pertahankan pola ini.", done: true });
+
+    list.push({ id: "r4", text: "Ikuti program pendampingan UMKM Level Up (BRIDA Provinsi Jambi) untuk naik kategori kelayakan.", done: u.kategori === "Layak Tinggi" });
+    return list;
+  }
+
+  const STAKEHOLDERS = [
+    { id: "bi", nama: "Bank Indonesia Kanwil Jambi & OJK Provinsi Jambi", peran: "Regulator & penyedia data agregat resmi, pengawas kepatuhan model terhadap PADG QRIS dan POJK Pemeringkat Kredit Alternatif; mendorong sinergi lewat TPAKD." },
+    { id: "pjp", nama: "Penyelenggara Jasa Pembayaran (PJP) QRIS", peran: "Penyedia data transaksi mentah dari merchant, wajib menjaga kerahasiaan data individu dan hanya meneruskan data teragregasi/anonim." },
+    { id: "koperasi", nama: "Koperasi/BPR/BMT/Bank Daerah di Jambi", peran: "Lembaga penyalur pembiayaan yang memakai keluaran skor QRIS-SCORE sebagai salah satu input penilaian kredit." },
+    { id: "pemprov", nama: "Pemerintah Provinsi Jambi/BRIDA", peran: "Memfasilitasi program pendampingan UMKM naik kelas (UMKM Level Up) bagi kategori Belum Layak/Bersyarat, selaras dengan Gentala Arasi." },
+  ];
+
+  const FAQ = [
+    { q: "Apakah data transaksi saya aman?", a: "Ya. Data transaksi hanya diambil dalam bentuk teragregasi & dianonimkan sebelum diproses mesin skoring, sesuai prinsip pembatasan tujuan pengolahan data pada UU No. 27/2022 tentang Pelindungan Data Pribadi." },
+    { q: "Bagaimana skor QRIS-SCORE dihitung?", a: "Tiga variabel — frekuensi transaksi (X1), nominal & pertumbuhan omzet (X2), serta konsistensi/volatilitas transaksi (X3) — dinormalisasi ke skala 0-100 lalu dijumlah berbobot 25%:50%:25% menjadi skor komposit 0-100." },
+    { q: "Apakah bobot 25:50:25 bisa diubah?", a: "Bisa. Lembaga keuangan/koperasi mitra dapat mengkalibrasi ulang bobot lewat halaman Pengaturan Bobot, karena model bersifat rule-based yang transparan dan auditable." },
+    { q: "Apa yang terjadi jika skor saya masuk kategori Belum Layak?", a: "Bukan penolakan permanen — UMKM diarahkan ke program pendampingan (UMKM Level Up) agar dapat memperbaiki pola transaksi terlebih dahulu sebelum mengajukan kembali." },
+    { q: "Apakah QRIS-SCORE menggantikan penilaian kredit manual sepenuhnya?", a: "Tidak. Skor ini adalah salah satu input pertimbangan (proksi kelayakan), bukan kepastian kemampuan membayar, dan tetap dapat dilengkapi evaluasi kualitatif oleh analis kredit." },
+  ];
+
+  global.QSData = {
+    RAW_UMKM,
+    computeAll,
+    formatRupiah,
+    rekomendasi,
+    STAKEHOLDERS,
+    FAQ,
+  };
+})(window);
+
+  </script>
+  <script>
+/* ============================================================
+   QRIS-SCORE — Vanilla JS UI Kit (tanpa React/Babel/JSX)
+   Semua fungsi di sini mengembalikan STRING HTML, bukan elemen React.
+   ============================================================ */
+"use strict";
+
+const ICONS = {
+  home: '<path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v9h14v-9"/>',
+  history: '<path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 8v4l3 2"/>',
+  send: '<path d="m22 2-11 11"/><path d="M22 2 15 22l-4-9-9-4Z"/>',
+  book: '<path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v17H6.5A2.5 2.5 0 0 0 4 21.5Z"/><path d="M4 19.5V4.5"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4.5 5-6 8-6s6.5 1.5 8 6"/>',
+  chevron: '<path d="m9 18 6-6-6-6"/>',
+  back: '<path d="m15 18-6-6 6-6"/>',
+  qr: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM20 14v3M14 20h3M20 20v.01"/>',
+  bolt: '<path d="M13 2 4 14h6l-1 8 9-12h-6z"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  shield: '<path d="M12 2 4 5v6c0 5 3.5 8.5 8 11 4.5-2.5 8-6 8-11V5Z"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/>',
+  down: '<path d="m6 9 6 6 6-6"/>',
+  sliders: '<path d="M4 6h9M17 6h3M4 12h3M9 12h11M4 18h13M19 18h1"/><circle cx="14" cy="6" r="2"/><circle cx="7" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>',
+  chart: '<path d="M4 19V5M4 19h16"/><path d="M8 19v-6M12 19V9M16 19v-4"/>',
+  download: '<path d="M12 3v12"/><path d="m7 11 5 5 5-5"/><path d="M5 21h14"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/>',
+  x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  switch: '<path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/>',
+  wallet: '<path d="M3 7a2 2 0 0 1 2-2h13a1 1 0 0 1 1 1v3"/><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M16 14h2"/>',
+  building: '<rect x="4" y="3" width="16" height="18"/><path d="M9 8h1M14 8h1M9 12h1M14 12h1M9 16h1M14 16h1"/>',
+  list: '<path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/>',
+  play: '<path d="M6 4v16l14-8Z"/>',
+  gallery: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/>',
+  help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 1.5-2 2-2 3.5"/><path d="M12 17h.01"/>',
+  moon: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  fileDown: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M12 11v6M9.5 14.5 12 17l2.5-2.5"/>',
+};
+
+function icon(name, opts) {
+  opts = opts || {};
+  const size = opts.size || 20;
+  const cls = opts.className || "";
+  const sw = opts.strokeWidth || 1.8;
+  return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" class="${cls}" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ""}</svg>`;
+}
+
+const CAT_LABEL = { tinggi: "Layak Tinggi", bersyarat: "Layak Bersyarat", belum: "Belum Layak" };
+const CAT_CLASS = {
+  tinggi: { bg: "bg-emerald-50", text: "text-emerald-700", solid: "bg-emerald-500", border: "border-emerald-200" },
+  bersyarat: { bg: "bg-amber-50", text: "text-amber-700", solid: "bg-amber-500", border: "border-amber-200" },
+  belum: { bg: "bg-rose-50", text: "text-rose-700", solid: "bg-rose-500", border: "border-rose-200" },
+};
+
+function badge(kategoriColor) {
+  const c = CAT_CLASS[kategoriColor] || CAT_CLASS.bersyarat;
+  return `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${c.bg} ${c.text} border ${c.border}">
+    <span class="w-1.5 h-1.5 rounded-full ${c.solid}"></span>${CAT_LABEL[kategoriColor] || kategoriColor}
+  </span>`;
+}
+
+function card(inner, extraClass) {
+  return `<div class="bg-[var(--surface)] rounded-2xl border border-[var(--border)] shadow-[0_1px_2px_rgba(15,28,63,0.04)] ${extraClass || ""}">${inner}</div>`;
+}
+
+function sectionTitle(title, subtitle, eyebrow) {
+  return `<div class="mb-4">
+    ${eyebrow ? `<div class="text-xs font-semibold uppercase tracking-wider text-amber-600 mb-1">${eyebrow}</div>` : ""}
+    <h2 class="text-xl font-bold text-[var(--ink)]" style="font-family:'Space Grotesk',sans-serif">${title}</h2>
+    ${subtitle ? `<p class="text-sm text-[var(--muted)] mt-1">${subtitle}</p>` : ""}
+  </div>`;
+}
+
+function miniBarHtml(value, colorKey, id) {
+  const solidMap = { tinggi: "bg-emerald-500", bersyarat: "bg-amber-500", belum: "bg-rose-500" };
+  const w = Math.max(2, Math.min(100, value));
+  return `<div class="w-full h-1.5 rounded-full bg-slate-400/20 overflow-hidden"><div ${id ? `id="${id}"` : ""} class="h-full rounded-full ${solidMap[colorKey] || "bg-amber-500"}" style="width:${w}%"></div></div>`;
+}
+
+/* ---------------- SVG: Arc gauge ---------------- */
+function arcGaugeSvg(value, colorKey, size, idPrefix) {
+  size = size || 220;
+  const strokeColorMap = { tinggi: "#10b981", bersyarat: "#d97706", belum: "#c0433a" };
+  const stroke = strokeColorMap[colorKey] || "#d97706";
+  const r = size * 0.42;
+  const cx = size / 2, cy = size / 2;
+  const startAngle = 210, endAngle = -30;
+  const totalAngle = startAngle - endAngle;
+  function polar(angleDeg, radius) {
+    const a = (angleDeg * Math.PI) / 180;
+    return { x: cx + radius * Math.cos(a), y: cy - radius * Math.sin(a) };
+  }
+  function arcPath(a0, a1, radius) {
+    const p0 = polar(a0, radius), p1 = polar(a1, radius);
+    const large = Math.abs(a0 - a1) > 180 ? 1 : 0;
+    return `M ${p0.x} ${p0.y} A ${radius} ${radius} 0 ${large} 1 ${p1.x} ${p1.y}`;
+  }
+  const valueAngle = startAngle - (Math.max(0, Math.min(100, value)) / 100) * totalAngle;
+  const ticks = [0, 40, 70, 100];
+  let ticksHtml = "";
+  ticks.forEach((t) => {
+    const a = startAngle - (t / 100) * totalAngle;
+    const p1 = polar(a, r - 12), p2 = polar(a, r + 12);
+    ticksHtml += `<line x1="${p1.x}" y1="${p1.y}" x2="${p2.x}" y2="${p2.y}" style="stroke:var(--muted)" stroke-width="1.5"/>`;
+  });
+  const pfx = idPrefix || "gauge";
+  return `<svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size * 0.75}" id="${pfx}-svg">
+    <path d="${arcPath(startAngle, endAngle, r)}" style="stroke:var(--border)" stroke-width="14" fill="none" stroke-linecap="round"/>
+    <path id="${pfx}-fill" d="${arcPath(startAngle, valueAngle, r)}" stroke="${stroke}" stroke-width="14" fill="none" stroke-linecap="round"/>
+    ${ticksHtml}
+    <text id="${pfx}-value" x="${cx}" y="${cy - 6}" text-anchor="middle" font-size="${size * 0.19}" font-weight="700" font-family="'IBM Plex Mono',monospace" style="fill:var(--ink)">${value.toFixed(1)}</text>
+    <text x="${cx}" y="${cy + 20}" text-anchor="middle" font-size="${size * 0.052}" style="fill:var(--muted)" font-family="Inter,sans-serif">dari 100</text>
+  </svg>`;
+}
+
+/* ---------------- SVG: Line trend chart ---------------- */
+function lineTrendSvg(data, colorKey, height) {
+  height = height || 160;
+  const strokeColorMap = { tinggi: "#10b981", bersyarat: "#d97706", belum: "#c0433a" };
+  const stroke = strokeColorMap[colorKey] || "#0ea5e9";
+  const w = 320;
+  const values = data.map((d) => d.omzet);
+  const max = Math.max(...values), min = Math.min(...values);
+  const pad = 24;
+  const pts = data.map((d, i) => {
+    const x = pad + (i / (data.length - 1)) * (w - pad * 2);
+    const y = height - pad - ((d.omzet - min) / (max - min || 1)) * (height - pad * 2);
+    return { x, y, d };
+  });
+  const path = pts.map((p, i) => (i === 0 ? `M ${p.x} ${p.y}` : `L ${p.x} ${p.y}`)).join(" ");
+  const area = path + ` L ${pts[pts.length - 1].x} ${height - pad} L ${pts[0].x} ${height - pad} Z`;
+  let dots = "";
+  pts.forEach((p) => {
+    dots += `<circle cx="${p.x}" cy="${p.y}" r="3.2" fill="var(--surface)" stroke="${stroke}" stroke-width="2"/>
+      <text x="${p.x}" y="${height - 4}" font-size="9" text-anchor="middle" fill="#94a3b8" font-family="Inter,sans-serif">${p.d.bulan}</text>`;
+  });
+  return `<svg viewBox="0 0 ${w} ${height}" width="100%" height="${height}" preserveAspectRatio="none" class="overflow-visible">
+    <path d="${area}" fill="${stroke}" opacity="0.08"/>
+    <path d="${path}" stroke="${stroke}" stroke-width="2.5" fill="none" stroke-linejoin="round" stroke-linecap="round"/>
+    ${dots}
+  </svg>`;
+}
+
+/* ---------------- SVG: Bar histogram ---------------- */
+function barHistogramSvg(items, height) {
+  height = height || 180;
+  const w = 360;
+  const barW = (w - 20) / items.length - 6;
+  const max = 100;
+  const colorMap = { tinggi: "#10b981", bersyarat: "#d97706", belum: "#c0433a" };
+  let gridLines = "";
+  [0, 40, 70, 100].forEach((t) => {
+    const yy = height - 24 - (t / max) * (height - 40);
+    gridLines += `<line x1="10" x2="${w - 10}" y1="${yy}" y2="${yy}" style="stroke:var(--border)" stroke-width="1"/>`;
+  });
+  let bars = "";
+  items.forEach((it, i) => {
+    const barH = (it.skor / max) * (height - 40);
+    const x = 10 + i * (barW + 6);
+    const y = height - 24 - barH;
+    bars += `<rect x="${x}" y="${y}" width="${barW}" height="${barH}" rx="3" fill="${colorMap[it.kategoriColor]}" opacity="0.9"/>
+      <text x="${x + barW / 2}" y="${height - 10}" font-size="8" text-anchor="middle" fill="#94a3b8">${escapeHtml(it.nama.split(" ")[0])}</text>`;
+  });
+  return `<svg viewBox="0 0 ${w} ${height}" width="100%" height="${height}">${gridLines}${bars}</svg>`;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+  </script>
+  <script>
+/* ============================================================
+   QRIS-SCORE — Purwarupa Aplikasi (Jambi Spark 2026)
+   VERSI VANILLA JS — tanpa React, tanpa Babel, tanpa JSX.
+   Alasan: <script type="text/babel" src="..."> di browser memakai
+   XHR internal untuk mengambil source sebelum di-transpile, dan XHR
+   ke file lokal (file://) diblokir kebijakan CORS Chrome. Vanilla JS
+   dengan <script> biasa tidak punya masalah ini — makanya dipakai di sini.
+   ============================================================ */
+"use strict";
+
+const DEMO_UMKM_ID = "umkm-04"; // "Soto Jambi Pak Har" — profil Bersyarat, contoh paling instruktif
+
+// Ubah nilai ini untuk menghasilkan build "web" (khusus Lembaga Keuangan) atau
+// "app" (khusus Portal UMKM). null = build gabungan dengan role switcher.
+// (Nilai ini di-override otomatis lewat proses build ke masing-masing folder
+// qris-score-web/ dan qris-score-app/ — lihat build.py.)
+const LOCKED_ROLE = "lembaga";
+
+const state = {
+  stage: "splash", // splash | role | login | connect | app
+  role: LOCKED_ROLE, // 'umkm' | 'lembaga'
+  screen: "dashboard",
+  weights: { w1: 0.25, w2: 0.5, w3: 0.25 },
+  connectStep: "pilih", // pilih | consent | loading | sukses
+  consent: false,
+  selectedPjp: null,
+  selectedId: null,
+  applications: {}, // umkmId -> {jumlah, tujuan, status, tanggal}
+  darkMode: false,
+  drawerOpen: false,
+  showMath: false,
+  kalkulator: { freq: 500, nominal: 20000000, growth: 5, cv: 0.4 },
+  daftar: { filter: "semua", sort: "skor-desc", query: "" },
+  cakupan: 17.5,
+  activeTentangNode: null,
+  openFaq: null,
+  toast: "",
+};
+
+function getData() { return QSData.computeAll(state.weights); }
+function getMe(data) { return data.find((d) => d.id === DEMO_UMKM_ID); }
+
+function notify(msg) {
+  state.toast = msg;
+  renderToast();
+  clearTimeout(window.__toastTimer);
+  window.__toastTimer = setTimeout(() => { state.toast = ""; renderToast(); }, 2600);
+}
+function renderToast() {
+  const el = document.getElementById("toast");
+  if (!el) return;
+  if (!state.toast) { el.style.display = "none"; return; }
+  el.style.display = "flex";
+  el.innerHTML = icon("check", { size: 16 }) + " " + escapeHtml(state.toast);
+}
+
+/* ================= RENDER PIPELINE ================= */
+
+function render() {
+  document.documentElement.classList.toggle("dark", state.darkMode);
+  const root = document.getElementById("app-root");
+  let html = "";
+  if (state.stage === "splash") html = tplSplash();
+  else if (state.stage === "role") html = tplRoleSelect();
+  else if (state.stage === "login") html = tplLogin();
+  else if (state.stage === "connect") html = tplConnect();
+  else if (state.stage === "app") {
+    const data = getData();
+    html = state.role === "umkm" ? shellUMKM(data) : shellLembaga(data);
+  }
+  root.innerHTML = html;
+  afterRender();
+}
+
+function afterRender() {
+  // Modal untuk detail debitur (Lembaga) dirender terpisah sebagai overlay
+  if (state.stage === "app" && state.role === "lembaga" && state.screen === "daftar" && state.selectedId) {
+    const data = getData();
+    const d = data.find((x) => x.id === state.selectedId);
+    if (d) {
+      const modalHost = document.getElementById("modal-host");
+      if (modalHost) modalHost.innerHTML = tplDetailDebiturModal(d);
+    }
+  }
+  if (state.stage === "splash") {
+    clearTimeout(window.__splashTimer);
+    window.__splashTimer = setTimeout(() => {
+      if (LOCKED_ROLE) { state.role = LOCKED_ROLE; state.stage = "login"; }
+      else { state.stage = "role"; }
+      render();
+    }, 1400);
+  }
+  if (state.stage === "connect" && state.connectStep === "loading") {
+    clearTimeout(window.__connectTimer);
+    window.__connectTimer = setTimeout(() => { state.connectStep = "sukses"; render(); }, 1400);
+  }
+}
+
+/* ================= NAVIGATION HELPERS ================= */
+
+function goRole(role) { state.role = role; state.stage = "login"; render(); }
+function goDemoLogin() {
+  if (state.role === "umkm") { state.stage = "connect"; state.connectStep = "pilih"; }
+  else { state.stage = "app"; state.screen = "ringkasan"; }
+  render();
+}
+function switchRole() {
+  if (LOCKED_ROLE) {
+    // Build ini terkunci ke satu peran — "Ganti Peran" berfungsi sebagai reset demo.
+    state.applications = {}; state.weights = { w1: 0.25, w2: 0.5, w3: 0.25 };
+    state.screen = "dashboard"; state.selectedId = null; state.drawerOpen = false;
+    state.stage = "login"; state.role = LOCKED_ROLE;
+    render();
+    return;
+  }
+  state.stage = "role"; state.role = null; state.drawerOpen = false;
+  state.screen = "dashboard"; state.selectedId = null;
+  render();
+}
+function setScreen(scr) { state.screen = scr; state.selectedId = null; state.drawerOpen = false; render(); }
+
+/* ================= SPLASH / ROLE / LOGIN / CONNECT ================= */
+
+function qrPulseMark(size) {
+  size = size || 84;
+  const cells = [
+    [1,1,1,0,1,1,1],[1,0,1,0,1,0,1],[1,1,1,0,1,1,1],[0,0,0,0,0,0,0],
+    [1,1,0,1,0,1,1],[1,0,1,0,1,0,1],[1,1,1,0,1,1,1],
+  ];
+  let rects = "";
+  cells.forEach((row, r) => row.forEach((v, c) => {
+    if (!v) return;
+    const fill = (r + c) % 5 === 0 ? "#d98e04" : "#0f1c3f";
+    const delay = ((r * 7 + c) * 0.05).toFixed(2);
+    rects += `<rect x="${c*10}" y="${r*10}" width="8" height="8" rx="2" fill="${fill}" style="animation:pulseCell 2.4s ease-in-out infinite;animation-delay:${delay}s"/>`;
+  }));
+  return `<svg viewBox="0 0 70 70" width="${size}" height="${size}">${rects}</svg>`;
+}
+
+function tplSplash() {
+  return `<div class="h-screen w-full flex flex-col items-center justify-center bg-[#0f1c3f] text-white">
+    ${qrPulseMark(92)}
+    <h1 class="mt-6 text-3xl font-bold tracking-tight" style="font-family:'Space Grotesk',sans-serif">QRIS-SCORE</h1>
+    <p class="mt-2 text-slate-300 text-sm tracking-wide">Transaksimu, Kunci Modal Usahamu</p>
+    <div class="mt-8 w-40 h-1 rounded-full bg-white/10 overflow-hidden">
+      <div class="h-full bg-amber-400" style="animation:loadBar 1.3s ease-in-out"></div>
+    </div>
+  </div>`;
+}
+
+function tplRoleSelect() {
+  return `<div class="min-h-screen flex flex-col items-center justify-center px-6 py-12">
+    <div class="w-full max-w-3xl text-center mb-10">
+      <div class="flex justify-center mb-4">${qrPulseMark(56)}</div>
+      <h1 class="text-2xl md:text-3xl font-bold text-[var(--ink)]" style="font-family:'Space Grotesk',sans-serif">Masuk sebagai siapa hari ini?</h1>
+      <p class="text-[var(--muted)] mt-2 text-sm">Satu purwarupa, dua sudut pandang — sesuai rancangan sistem QRIS-SCORE.</p>
+    </div>
+    <div class="grid md:grid-cols-2 gap-5 w-full max-w-3xl">
+      <button data-action="goRole" data-role="umkm" class="group text-left bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-7 hover:border-amber-400 hover:shadow-lg transition-all">
+        <div class="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center mb-4">${icon("wallet", { size: 24 })}</div>
+        <h3 class="font-bold text-lg text-[var(--ink)]">Saya Pelaku UMKM</h3>
+        <p class="text-sm text-[var(--muted)] mt-1.5">Lihat skor kelayakan, riwayat transaksi QRIS, dan ajukan pembiayaan.</p>
+        <div class="mt-4 text-sm font-medium text-amber-600 flex items-center gap-1">Lanjutkan ${icon("chevron", { size: 16 })}</div>
+      </button>
+      <button data-action="goRole" data-role="lembaga" class="group text-left bg-[var(--surface)] rounded-2xl border border-[var(--border)] p-7 hover:border-[#0f1c3f] hover:shadow-lg transition-all">
+        <div class="w-12 h-12 rounded-xl bg-slate-400/10 text-[var(--ink)] flex items-center justify-center mb-4">${icon("building", { size: 24 })}</div>
+        <h3 class="font-bold text-lg text-[var(--ink)]">Saya Lembaga Keuangan/Koperasi</h3>
+        <p class="text-sm text-[var(--muted)] mt-1.5">Tinjau pengajuan pembiayaan, skor debitur, dan kalibrasi model.</p>
+        <div class="mt-4 text-sm font-medium text-[var(--ink)] flex items-center gap-1">Lanjutkan ${icon("chevron", { size: 16 })}</div>
+      </button>
+    </div>
+  </div>`;
+}
+
+function tplLogin() {
+  const isUmkm = state.role === "umkm";
+  return `<div class="min-h-screen flex items-center justify-center px-6">
+    <div class="w-full max-w-sm">
+      <div class="flex justify-center mb-6">${qrPulseMark(48)}</div>
+      <h2 class="text-xl font-bold text-center text-[var(--ink)]" style="font-family:'Space Grotesk',sans-serif">
+        ${isUmkm ? "Masuk sebagai UMKM" : "Masuk sebagai Lembaga Keuangan"}
+      </h2>
+      <p class="text-center text-sm text-[var(--muted)] mt-1 mb-6">Form simulasi — tidak perlu data asli.</p>
+      <div class="space-y-3">
+        <input placeholder="${isUmkm ? "Nama usaha" : "Nama lembaga/koperasi"}" class="w-full border border-[var(--border)] bg-[var(--surface)] text-[var(--ink)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-300">
+        <input placeholder="Email atau No. HP" class="w-full border border-[var(--border)] bg-[var(--surface)] text-[var(--ink)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-300">
+        <input type="password" placeholder="Kata sandi" class="w-full border border-[var(--border)] bg-[var(--surface)] text-[var(--ink)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-300">
+        <button data-action="goDemoLogin" class="w-full bg-[#0f1c3f] text-white rounded-xl py-2.5 text-sm font-semibold hover:bg-[#16264f] transition-colors">Masuk</button>
+        <button data-action="goDemoLogin" class="w-full border border-amber-300 bg-amber-50 text-amber-700 rounded-xl py-2.5 text-sm font-semibold hover:bg-amber-100 transition-colors">Masuk sebagai Demo (untuk Juri)</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+const PJP_PROVIDERS = ["QRIS Merchant App Bank Daerah Jambi", "QRIS PJP Fintech Nasional A", "QRIS PJP Fintech Nasional B"];
+
+function tplConnect() {
+  const step = state.connectStep;
+  let body = "";
+  if (step === "pilih") {
+    body = `<h2 class="text-lg font-bold text-[var(--ink)]" style="font-family:'Space Grotesk',sans-serif">Hubungkan Akun QRIS</h2>
+      <p class="text-sm text-[var(--muted)] mt-1 mb-5">Pilih penyedia (PJP) tempat QRIS usahamu terdaftar. (Simulasi alur data Sub-bab 4.5.1)</p>
+      <div class="space-y-2 text-left">
+        ${PJP_PROVIDERS.map((p) => `<button data-action="connectProvider" data-pjp="${escapeHtml(p)}" class="w-full flex items-center justify-between border border-[var(--border)] rounded-xl px-4 py-3 text-sm hover:border-amber-400 hover:bg-amber-50/50 transition-colors">
+          <span class="flex items-center gap-2 text-[var(--ink)]">${icon("qr", { size: 18, className: "text-slate-400" })}${escapeHtml(p)}</span>
+          ${icon("chevron", { size: 16, className: "text-slate-400" })}
+        </button>`).join("")}
+      </div>`;
+  } else if (step === "consent") {
+    body = `<div class="w-12 h-12 rounded-full bg-slate-400/10 text-[var(--ink)] flex items-center justify-center mx-auto mb-4">${icon("shield", { size: 22 })}</div>
+      <h2 class="text-lg font-bold text-[var(--ink)]" style="font-family:'Space Grotesk',sans-serif">Persetujuan Penggunaan Data</h2>
+      <p class="text-sm text-[var(--muted)] mt-2 mb-4 text-left leading-relaxed">
+        Data transaksi QRIS-mu akan diagregasi &amp; dianonimkan sebelum dihitung menjadi skor kelayakan
+        (lihat halaman "Tentang Sistem"). Ini sesuai UU No. 27/2022 tentang Pelindungan Data Pribadi
+        — prinsip pembatasan tujuan pengolahan data (Sub-bab 2.6 KTI).
+      </p>
+      <label class="flex items-start gap-2.5 text-left text-sm bg-slate-400/5 rounded-xl p-3.5 border border-[var(--border)] mb-5 cursor-pointer">
+        <input type="checkbox" id="consent-checkbox" ${state.consent ? "checked" : ""} class="mt-0.5 accent-amber-500">
+        <span class="text-[var(--ink)]">Saya setuju data transaksi QRIS usaha saya digunakan untuk perhitungan skor kelayakan pembiayaan oleh QRIS-SCORE.</span>
+      </label>
+      <button data-action="connectSubmit" ${state.consent ? "" : "disabled"} class="w-full rounded-xl py-2.5 text-sm font-semibold transition-colors ${state.consent ? "bg-[#0f1c3f] text-white hover:bg-[#16264f]" : "bg-slate-400/20 text-slate-400 cursor-not-allowed"}">
+        Setuju &amp; Hubungkan
+      </button>`;
+  } else if (step === "loading") {
+    body = `<div class="py-10">
+      <div class="w-10 h-10 border-[3px] border-amber-200 border-t-amber-500 rounded-full animate-spin mx-auto mb-4"></div>
+      <p class="text-sm text-[var(--muted)]">Menghubungkan ke ${escapeHtml(state.selectedPjp || "")}…</p>
+    </div>`;
+  } else if (step === "sukses") {
+    body = `<div class="py-6">
+      <div class="w-14 h-14 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto mb-4">${icon("check", { size: 26 })}</div>
+      <h2 class="text-lg font-bold text-[var(--ink)]">Berhasil terhubung!</h2>
+      <p class="text-sm text-[var(--muted)] mt-1 mb-6">Data transaksimu mulai disinkronkan ke mesin skoring QRIS-SCORE.</p>
+      <button data-action="connectDone" class="w-full bg-amber-500 text-white rounded-xl py-2.5 text-sm font-semibold hover:bg-amber-600 transition-colors">Lihat Dashboard Skor</button>
+    </div>`;
+  }
+  return `<div class="min-h-screen flex items-center justify-center px-6"><div class="w-full max-w-sm text-center">${body}</div></div>`;
+}
+
+/* ================= SHELL: UMKM (mobile-first, bottom tab) ================= */
+
+const UMKM_TABS = [
+  { id: "dashboard", label: "Dashboard", icon: "home" },
+  { id: "riwayat", label: "Riwayat", icon: "history" },
+  { id: "ajukan", label: "Ajukan", icon: "send" },
+  { id: "edukasi", label: "Edukasi", icon: "book" },
+  { id: "profil", label: "Profil", icon: "user" },
+];
+
+function topBar(title, opts) {
+  opts = opts || {};
+  const left = opts.onBackAction
+    ? `<button data-action="${opts.onBackAction}" class="text-[var(--muted)] hover:text-[var(--ink)]">${icon("back", { size: 20 })}</button>`
+    : qrPulseMark(22);
+  return `<div class="sticky top-0 z-30 bg-[var(--surface)]/90 backdrop-blur border-b border-[var(--border)] px-4 py-3.5 flex items-center gap-3">
+    ${left}
+    <h1 class="font-bold text-[var(--ink)] flex-1 truncate" style="font-family:'Space Grotesk',sans-serif">${title}</h1>
+    ${opts.right || ""}
+  </div>`;
+}
+
+function shellUMKM(data) {
+  const me = getMe(data);
+  const detailScreens = ["detail-skor", "tentang", "faq", "showcase"];
+  const isDashTab = state.screen === "dashboard" || detailScreens.includes(state.screen);
+  let content = "";
+  if (state.screen === "dashboard") content = screenUMKMDashboard(me);
+  else if (state.screen === "detail-skor") content = screenUMKMDetailSkor(me);
+  else if (state.screen === "riwayat") content = screenUMKMRiwayat(me);
+  else if (state.screen === "ajukan") content = screenUMKMAjukan(me);
+  else if (state.screen === "edukasi") content = screenUMKMEdukasi();
+  else if (state.screen === "profil") content = screenUMKMProfil(me);
+  else if (state.screen === "tentang") content = screenTentang(true);
+  else if (state.screen === "faq") content = screenFAQ(true);
+  else if (state.screen === "showcase") content = screenShowcase(true);
+
+  const tabs = UMKM_TABS.map((t) => {
+    const active = state.screen === t.id || (t.id === "dashboard" && isDashTab);
+    return `<button data-action="setScreen" data-screen="${t.id}" class="flex flex-col items-center gap-1 py-2.5 text-[11px] font-medium ${active ? "text-amber-600" : "text-slate-400"}">
+      ${icon(t.icon, { size: 20 })}${t.label}
+    </button>`;
+  }).join("");
+
+  return `<div class="max-w-lg mx-auto min-h-screen bg-[var(--page-bg)] pb-20 relative shadow-2xl">
+    ${content}
+    <div class="fixed bottom-0 left-0 right-0 max-w-lg mx-auto bg-[var(--surface)] border-t border-[var(--border)] grid grid-cols-5 z-30">${tabs}</div>
+  </div>`;
+}
+
+function screenUMKMDashboard(me) {
+  const naik = me.skor > 40;
+  return `${topBar("Dashboard Skor", { right: `<button data-action="setScreen" data-screen="profil" class="text-slate-400">${icon("user", { size: 20 })}</button>` })}
+  <div class="p-4 space-y-4">
+    ${card(`
+      <div class="p-5">
+        <div class="flex items-center justify-between mb-1">
+          <span class="text-sm text-[var(--muted)]">${escapeHtml(me.nama)} · ${escapeHtml(me.jenisUsaha)}</span>
+          ${badge(me.kategoriColor)}
+        </div>
+        <div class="flex flex-col items-center py-2">
+          ${arcGaugeSvg(me.skor, me.kategoriColor, 220, "dash-gauge")}
+          ${badge(me.kategoriColor)}
+        </div>
+        <p class="text-center text-xs text-[var(--muted)] mt-2">${naik ? `Pertumbuhan omzet bulanan tercatat ${me.growth > 0 ? "+" : ""}${me.growth}% MoM` : "Perlu perbaikan pola transaksi"}</p>
+        <button data-action="setScreen" data-screen="detail-skor" class="w-full mt-4 bg-[#0f1c3f] text-white rounded-xl py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5 hover:bg-[#16264f]">
+          Lihat rincian skor ${icon("chevron", { size: 16 })}
+        </button>
+      </div>`)}
+
+    <div class="grid grid-cols-3 gap-2.5">
+      ${varMini("Frekuensi (X1)", me.x1norm, `${me.freq}x/bln`, me.kategoriColor)}
+      ${varMini("Omzet & Growth (X2)", me.x2norm, QSData.formatRupiah(me.nominal), me.kategoriColor)}
+      ${varMini("Konsistensi (X3)", me.x3norm, `CV ${me.cv}`, me.kategoriColor)}
+    </div>
+
+    ${card(`<div class="p-5">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="font-semibold text-sm text-[var(--ink)]">Tren Omzet 6 Bulan Terakhir</h3>
+        ${icon("chart", { size: 16, className: "text-slate-400" })}
+      </div>
+      ${lineTrendSvg(me.history, me.kategoriColor)}
+    </div>`)}
+
+    ${me.kategoriColor !== "belum" ? `<div class="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3">
+      ${icon("bolt", { size: 18, className: "text-amber-600 mt-0.5 shrink-0" })}
+      <p class="text-sm text-amber-800">Skor kamu memenuhi syarat untuk mengajukan pembiayaan ke Koperasi Mitra Gentala Arasi.</p>
+    </div>` : ""}
+  </div>`;
+}
+
+function varMini(label, value, raw, colorKey) {
+  return card(`<div class="p-3">
+    <p class="text-[11px] text-[var(--muted)] leading-tight mb-1.5">${label}</p>
+    <p class="font-mono text-lg font-bold text-[var(--ink)]">${value.toFixed(0)}</p>
+    ${miniBarHtml(value, colorKey)}
+    <p class="text-[10px] text-slate-400 mt-1">${escapeHtml(raw)}</p>
+  </div>`);
+}
+
+function screenUMKMDetailSkor(me) {
+  const rek = QSData.rekomendasi(me);
+  const rows = [
+    { l: "Frekuensi Transaksi (X1)", v: me.x1norm, w: 25 },
+    { l: "Nominal & Pertumbuhan Omzet (X2)", v: me.x2norm, w: 50 },
+    { l: "Konsistensi Transaksi (X3)", v: me.x3norm, w: 25 },
+  ];
+  return `${topBar("Detail Skor & Rekomendasi", {
+    onBackAction: "backToDashboard",
+    right: `<button data-action="downloadSkorPdf" class="flex items-center gap-1.5 text-xs font-semibold text-amber-600 border border-amber-200 bg-amber-50 rounded-lg px-2.5 py-1.5">${icon("fileDown", { size: 14 })} PDF</button>`,
+  })}
+  <div class="p-4 space-y-4">
+    ${card(`<div class="p-4">
+      <h3 class="font-semibold text-sm text-[var(--ink)] mb-3">Rincian Perhitungan</h3>
+      ${rows.map((r) => `<div class="mb-2.5">
+        <div class="flex justify-between text-xs mb-1"><span class="text-[var(--muted)]">${r.l} <span class="text-slate-400">(bobot ${r.w}%)</span></span><span class="font-mono font-semibold text-[var(--ink)]">${r.v.toFixed(1)}</span></div>
+        ${miniBarHtml(r.v, me.kategoriColor)}
+      </div>`).join("")}
+      <button data-action="toggleMath" class="text-xs font-medium text-amber-600 flex items-center gap-1 mt-2">
+        ${state.showMath ? "Sembunyikan" : "Tampilkan"} langkah perhitungan ${icon("down", { size: 14, className: state.showMath ? "rotate-180" : "" })}
+      </button>
+      ${state.showMath ? `<div class="mt-3 bg-slate-400/5 rounded-xl p-3 font-mono text-[11px] text-[var(--muted)] space-y-1 leading-relaxed">
+        <p>X1_norm = ${me.x1norm} (min-max dari ${me.freq}x/bln)</p>
+        <p>Omzet_norm = ${me.omzetNorm}, Growth_norm = ${me.growthNorm}</p>
+        <p>X2_norm = 0.7×${me.omzetNorm} + 0.3×${me.growthNorm} = ${me.x2norm}</p>
+        <p>X3_norm = 100 − minmax(CV ${me.cv}) = ${me.x3norm}</p>
+        <p class="text-[var(--ink)] font-bold pt-1 border-t border-[var(--border)] mt-1">S = 0.25×${me.x1norm} + 0.5×${me.x2norm} + 0.25×${me.x3norm} = ${me.skor}</p>
+        <p class="text-slate-400 italic">Transparan &amp; auditable — sesuai prinsip rule-based scoring (Sub-bab 4.2.2 KTI).</p>
+      </div>` : ""}
+    </div>`)}
+
+    ${card(`<div class="p-4">
+      <h3 class="font-semibold text-sm text-[var(--ink)] mb-3">Rekomendasi Peningkatan Skor</h3>
+      <div class="space-y-2.5">
+        ${rek.map((r) => `<div class="flex items-start gap-2.5">
+          <div class="w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${r.done ? "bg-emerald-500 text-white" : "border-2 border-slate-300"}">${r.done ? icon("check", { size: 12 }) : ""}</div>
+          <p class="text-sm ${r.done ? "text-slate-400 line-through" : "text-[var(--ink)]"}">${escapeHtml(r.text)}</p>
+        </div>`).join("")}
+      </div>
+    </div>`)}
+  </div>`;
+}
+
+function screenUMKMRiwayat(me) {
+  const rows = [];
+  me.history.forEach((h) => {
+    for (let k = 0; k < 3; k++) {
+      rows.push({ tgl: `${5 + k * 9} ${h.bulan}`, nominal: Math.round((h.omzet / 20) * (0.6 + Math.random() * 0.8)), status: Math.random() > 0.05 ? "Berhasil" : "Gagal" });
+    }
+  });
+  rows.reverse();
+  return `${topBar("Riwayat Transaksi QRIS")}
+  <div class="p-4">
+    ${card(`<div class="divide-y divide-[var(--border)]">${rows.map((r) => `<div class="flex items-center justify-between px-4 py-3">
+      <div>
+        <p class="text-sm font-medium text-[var(--ink)]">${r.tgl} 2026</p>
+        <p class="text-[11px] ${r.status === "Berhasil" ? "text-emerald-600" : "text-rose-500"}">${r.status}</p>
+      </div>
+      <p class="font-mono text-sm font-semibold text-[var(--ink)]">${QSData.formatRupiah(r.nominal)}</p>
+    </div>`).join("")}</div>`)}
+    <p class="text-center text-[11px] text-slate-400 mt-3">Data ditarik dari PJP QRIS (simulasi) — mencerminkan Sub-bab 4.5.1.</p>
+  </div>`;
+}
+
+function screenUMKMAjukan(me) {
+  const existing = state.applications[me.id];
+  return `${topBar("Ajukan Pembiayaan")}
+  <div class="p-4 space-y-4">
+    ${card(`<div class="p-4">
+      <div class="flex items-center justify-between text-sm mb-1"><span class="text-[var(--muted)]">Skor kelayakan saat ini</span>${badge(me.kategoriColor)}</div>
+      <p class="font-mono text-2xl font-bold text-[var(--ink)]">${me.skor.toFixed(1)}</p>
+    </div>`)}
+    ${existing ? card(`<div class="p-4">
+      <p class="text-sm text-[var(--muted)] mb-1">Status pengajuan</p>
+      <p class="font-semibold text-[var(--ink)]">${existing.status}</p>
+      <div class="mt-3 text-sm space-y-1 text-[var(--muted)]">
+        <p>Jumlah diajukan: <span class="font-mono font-medium text-[var(--ink)]">${QSData.formatRupiah(existing.jumlah)}</span></p>
+        <p>Tujuan: ${escapeHtml(existing.tujuan || "-")}</p>
+        <p>Tanggal: ${existing.tanggal}</p>
+      </div>
+    </div>`) : card(`<div class="p-4 space-y-3">
+      <div>
+        <label class="text-xs text-[var(--muted)]">Jumlah Pinjaman (Rp)</label>
+        <input type="number" id="ajukan-jumlah" value="10000000" class="w-full border border-[var(--border)] bg-[var(--surface)] text-[var(--ink)] rounded-xl px-3 py-2 text-sm mt-1 font-mono">
+      </div>
+      <div>
+        <label class="text-xs text-[var(--muted)]">Tujuan Penggunaan</label>
+        <textarea id="ajukan-tujuan" placeholder="mis. tambah stok bahan baku, sewa gerobak baru..." rows="3" class="w-full border border-[var(--border)] bg-[var(--surface)] text-[var(--ink)] rounded-xl px-3 py-2 text-sm mt-1"></textarea>
+      </div>
+      <button data-action="ajukanSubmit" class="w-full bg-amber-500 text-white rounded-xl py-2.5 text-sm font-semibold hover:bg-amber-600">Kirim Pengajuan</button>
+    </div>`)}
+  </div>`;
+}
+
+function screenUMKMEdukasi() {
+  const artikel = [
+    { t: "Kenapa Transaksi Non-Tunai Penting?", d: "QRIS merekam jejak arus kas usahamu secara otomatis, tanpa perlu pencatatan manual." },
+    { t: "Apa itu Konsistensi Transaksi?", d: "Semakin stabil transaksi harianmu (CV rendah), semakin tinggi kepercayaan lembaga keuangan." },
+    { t: "Alternative Credit Scoring itu Apa?", d: "Penilaian kelayakan kredit berbasis data transaksi digital, bukan cuma agunan atau riwayat bank." },
+  ];
+  return `${topBar("Edukasi")}
+  <div class="p-4 space-y-4">
+    ${card(`<div class="p-4">
+      <div class="aspect-video bg-[#0f1c3f] rounded-xl flex flex-col items-center justify-center text-white gap-2">
+        <button class="w-14 h-14 rounded-full bg-white/15 flex items-center justify-center hover:bg-white/25">${icon("play", { size: 24 })}</button>
+        <p class="text-xs text-slate-300">Video Edukasi: "Transaksi QRIS-mu, Kunci Modal Usahamu"</p>
+      </div>
+      <p class="text-sm text-[var(--muted)] mt-3">Video animasi edukasi mengenai manfaat konsistensi transaksi QRIS bagi akses pembiayaan formal (Sub-bab 4.5.4 KTI).</p>
+    </div>`)}
+    ${artikel.map((a) => card(`<div class="p-4"><h4 class="font-semibold text-sm text-[var(--ink)]">${a.t}</h4><p class="text-sm text-[var(--muted)] mt-1">${a.d}</p></div>`)).join("")}
+  </div>`;
+}
+
+function screenUMKMProfil(me) {
+  const items = [
+    { id: "tentang", label: "Tentang QRIS-SCORE & Alur Data", icon: "info" },
+    { id: "faq", label: "Bantuan / FAQ", icon: "help" },
+    { id: "showcase", label: "Showcase Gallery", icon: "gallery" },
+  ];
+  return `${topBar("Profil")}
+  <div class="p-4 space-y-4">
+    ${card(`<div class="p-4 flex items-center gap-3">
+      <div class="w-12 h-12 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center font-bold">${me.nama[0]}</div>
+      <div><p class="font-semibold text-[var(--ink)]">${escapeHtml(me.nama)}</p><p class="text-xs text-[var(--muted)]">${escapeHtml(me.jenisUsaha)} · Kota Jambi</p></div>
+    </div>`)}
+    ${card(`<div class="divide-y divide-[var(--border)]">${items.map((it) => `<button data-action="setScreen" data-screen="${it.id}" class="w-full flex items-center justify-between px-4 py-3.5 text-sm hover:bg-slate-500/5">
+      <span class="flex items-center gap-2.5 text-[var(--ink)]">${icon(it.icon, { size: 18, className: "text-slate-400" })}${it.label}</span>
+      ${icon("chevron", { size: 16, className: "text-slate-300" })}
+    </button>`).join("")}</div>`)}
+    ${card(`<div class="p-1"><button data-action="toggleDark" class="w-full flex items-center justify-between px-3.5 py-3 text-sm">
+      <span class="flex items-center gap-2.5 text-[var(--ink)] font-medium">${icon(state.darkMode ? "sun" : "moon", { size: 18, className: "text-slate-400" })}Mode ${state.darkMode ? "Terang" : "Gelap"}</span>
+      <span class="relative rounded-full transition-colors ${state.darkMode ? "bg-amber-500" : "bg-slate-300"}" style="width:40px;height:22px">
+        <span class="absolute top-0.5 rounded-full bg-white transition-all" style="width:18px;height:18px;left:${state.darkMode ? 19 : 2}px"></span>
+      </span>
+    </button></div>`)}
+    <button data-action="switchRole" class="w-full flex items-center justify-center gap-2 border border-[var(--border)] rounded-xl py-2.5 text-sm font-medium text-[var(--muted)] bg-[var(--surface)] hover:bg-slate-500/5">
+      ${icon("switch", { size: 16 })} ${LOCKED_ROLE ? "Reset Demo" : "Ganti Peran Demo"}
+    </button>
+  </div>`;
+}
+
+/* ================= SHELL: LEMBAGA KEUANGAN (sidebar) ================= */
+
+const LEMBAGA_NAV = [
+  { id: "ringkasan", label: "Ringkasan Portofolio", icon: "home" },
+  { id: "daftar", label: "Daftar Pengajuan", icon: "list" },
+  { id: "kalkulator", label: "Simulasi Kalkulator", icon: "sliders" },
+  { id: "analitik", label: "Analitik & Laporan", icon: "chart" },
+  { id: "bobot", label: "Pengaturan Bobot", icon: "sliders" },
+];
+const LEMBAGA_SHARED = [
+  { id: "tentang", label: "Tentang Sistem", icon: "info" },
+  { id: "faq", label: "Bantuan / FAQ", icon: "help" },
+  { id: "showcase", label: "Showcase Gallery", icon: "gallery" },
+];
+
+function navItem(item, active) {
+  return `<button data-action="setScreen" data-screen="${item.id}" class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-colors ${active ? "bg-[#0f1c3f] text-white" : "text-[var(--muted)] hover:bg-slate-500/10"}">
+    ${icon(item.icon, { size: 18 })} ${item.label}
+  </button>`;
+}
+
+function shellLembaga(data) {
+  let content = "";
+  if (state.screen === "ringkasan") content = screenLembagaRingkasan(data);
+  else if (state.screen === "daftar") content = screenLembagaDaftar(data);
+  else if (state.screen === "kalkulator") content = screenLembagaKalkulator();
+  else if (state.screen === "analitik") content = screenLembagaAnalitik(data);
+  else if (state.screen === "bobot") content = screenLembagaBobot();
+  else if (state.screen === "tentang") content = screenTentang(false);
+  else if (state.screen === "faq") content = screenFAQ(false);
+  else if (state.screen === "showcase") content = screenShowcase(false);
+
+  const navHtml = LEMBAGA_NAV.map((it) => navItem(it, state.screen === it.id)).join("");
+  const sharedHtml = LEMBAGA_SHARED.map((it) => navItem(it, state.screen === it.id)).join("");
+
+  const drawer = state.drawerOpen ? `<div class="fixed inset-0 z-[80] md:hidden">
+    <div class="absolute inset-0 bg-black/40" data-action="toggleDrawer"></div>
+    <aside class="absolute left-0 top-0 bottom-0 w-72 bg-[var(--surface)] p-4 space-y-1">
+      <div class="flex items-center gap-2 px-2 mb-4 mt-1">${qrPulseMark(24)}<span class="font-bold text-[var(--ink)]">QRIS-SCORE</span></div>
+      ${navHtml}
+      <div class="pt-3 mt-3 border-t border-[var(--border)] space-y-1">${sharedHtml}</div>
+    </aside>
+  </div>` : "";
+
+  return `<div class="min-h-screen flex">
+    <aside class="hidden md:flex flex-col w-64 bg-[var(--surface)] border-r border-[var(--border)] p-4 shrink-0">
+      <div class="flex items-center gap-2 px-2 mb-6 mt-1">${qrPulseMark(26)}<span class="font-bold text-[var(--ink)]" style="font-family:'Space Grotesk',sans-serif">QRIS-SCORE</span></div>
+      <div class="space-y-1">${navHtml}</div>
+      <div class="mt-4 pt-4 border-t border-[var(--border)] space-y-1">${sharedHtml}</div>
+      <div class="mt-auto pt-4 space-y-2">
+        <button data-action="toggleDark" class="w-full flex items-center gap-2 justify-center border border-[var(--border)] rounded-xl py-2 text-xs font-medium text-[var(--muted)] hover:bg-slate-500/10">
+          ${icon(state.darkMode ? "sun" : "moon", { size: 14 })} Mode ${state.darkMode ? "Terang" : "Gelap"}
+        </button>
+        <button data-action="switchRole" class="w-full flex items-center gap-2 justify-center border border-[var(--border)] rounded-xl py-2 text-xs font-medium text-[var(--muted)] hover:bg-slate-500/10">
+          ${icon("switch", { size: 14 })} ${LOCKED_ROLE ? "Reset Demo" : "Ganti Peran Demo"}
+        </button>
+      </div>
+    </aside>
+    ${drawer}
+    <main class="flex-1 min-w-0">
+      <div class="md:hidden sticky top-0 z-30 bg-[var(--surface)] border-b border-[var(--border)] px-4 py-3.5 flex items-center gap-3">
+        <button data-action="toggleDrawer" class="text-[var(--muted)]">${icon("list", { size: 22 })}</button>
+        <span class="font-bold text-[var(--ink)]">QRIS-SCORE</span>
+      </div>
+      <div class="p-4 md:p-8 max-w-6xl mx-auto">${content}</div>
+    </main>
+    <div id="modal-host"></div>
+  </div>`;
+}
+
+function screenLembagaRingkasan(data) {
+  const tinggi = data.filter((d) => d.kategoriColor === "tinggi").length;
+  const bersyarat = data.filter((d) => d.kategoriColor === "bersyarat").length;
+  const belum = data.filter((d) => d.kategoriColor === "belum").length;
+  const avg = data.reduce((a, d) => a + d.skor, 0) / data.length;
+  const stats = [
+    { l: "Total Pengajuan Masuk", v: data.length, cls: "" },
+    { l: "Layak Tinggi", v: tinggi, cls: "text-emerald-600" },
+    { l: "Layak Bersyarat", v: bersyarat, cls: "text-amber-600" },
+    { l: "Belum Layak", v: belum, cls: "text-rose-600" },
+  ];
+  return `${sectionTitle("Ringkasan Portofolio", "Rekap real-time seluruh UMKM kuliner mitra Provinsi Jambi.", "Dashboard Lembaga Keuangan")}
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+    ${stats.map((s) => card(`<div class="p-4"><p class="text-xs text-[var(--muted)] mb-1">${s.l}</p><p class="text-2xl font-bold font-mono ${s.cls || "text-[var(--ink)]"}">${s.v}</p></div>`)).join("")}
+    ${card(`<div class="p-4 flex items-center justify-between">
+      <div><p class="text-xs text-[var(--muted)] mb-1">Rata-rata Skor Komposit</p><p class="text-2xl font-bold font-mono text-[var(--ink)]">${avg.toFixed(1)}</p></div>
+      <div class="w-40">${barHistogramSvg(data, 90)}</div>
+    </div>`, "col-span-2 md:col-span-4")}
+  </div>
+  ${sectionTitle("10 Pengajuan Terbaru")}
+  ${card(`<div class="overflow-x-auto"><table class="w-full text-sm">
+    <thead class="text-left text-xs text-slate-400 border-b border-[var(--border)]"><tr><th class="px-4 py-2.5 font-medium">Nama Usaha</th><th class="px-4 py-2.5 font-medium">Skor</th><th class="px-4 py-2.5 font-medium">Kategori</th><th class="px-4 py-2.5 font-medium"></th></tr></thead>
+    <tbody>${data.slice(0, 6).map((d) => `<tr data-action="openDaftarFromRingkasan" data-id="${d.id}" class="border-b border-[var(--border)] last:border-0 hover:bg-slate-500/5 cursor-pointer">
+      <td class="px-4 py-3 font-medium text-[var(--ink)]">${escapeHtml(d.nama)}</td>
+      <td class="px-4 py-3 font-mono text-[var(--ink)]">${d.skor.toFixed(1)}</td>
+      <td class="px-4 py-3">${badge(d.kategoriColor)}</td>
+      <td class="px-4 py-3 text-slate-300">${icon("chevron", { size: 16 })}</td>
+    </tr>`).join("")}</tbody>
+  </table></div>`)}`;
+}
+
+function filteredDaftarRows(data) {
+  const f = state.daftar;
+  let rows = data.filter((d) => f.filter === "semua" || d.kategoriColor === f.filter)
+    .filter((d) => d.nama.toLowerCase().includes(f.query.toLowerCase()));
+  rows = rows.slice().sort((a, b) => f.sort === "skor-desc" ? b.skor - a.skor : f.sort === "skor-asc" ? a.skor - b.skor : a.nama.localeCompare(b.nama));
+  return rows;
+}
+
+function daftarTableHtml(data) {
+  const rows = filteredDaftarRows(data);
+  return `<table class="w-full text-sm">
+    <thead class="text-left text-xs text-slate-400 border-b border-[var(--border)]"><tr><th class="px-4 py-2.5 font-medium">Nama Usaha</th><th class="px-4 py-2.5 font-medium">Skor</th><th class="px-4 py-2.5 font-medium">Kategori</th><th class="px-4 py-2.5 font-medium">Status Pengajuan</th></tr></thead>
+    <tbody>${rows.map((d) => `<tr data-action="selectUmkm" data-id="${d.id}" class="border-b border-[var(--border)] last:border-0 hover:bg-slate-500/5 cursor-pointer ${state.selectedId === d.id ? "bg-amber-50/60" : ""}">
+      <td class="px-4 py-3 font-medium text-[var(--ink)]">${escapeHtml(d.nama)}${d.isExtension ? '<span class="text-[10px] text-slate-300 ml-1">(demo)</span>' : ""}</td>
+      <td class="px-4 py-3 font-mono text-[var(--ink)]">${d.skor.toFixed(1)}</td>
+      <td class="px-4 py-3">${badge(d.kategoriColor)}</td>
+      <td class="px-4 py-3 text-[var(--muted)] text-xs">${(state.applications[d.id] && state.applications[d.id].status) || "Belum ada pengajuan"}</td>
+    </tr>`).join("")}</tbody>
+  </table>`;
+}
+
+function screenLembagaDaftar(data) {
+  return `<div class="flex items-center justify-between flex-wrap gap-3">
+    ${sectionTitle("Daftar Pengajuan / Debitur", "Filter, urutkan, dan tinjau profil tiap UMKM.")}
+    <button data-action="exportCsv" class="flex items-center gap-1.5 text-sm font-medium border border-[var(--border)] rounded-xl px-3.5 py-2 hover:bg-slate-500/10 h-fit">${icon("download", { size: 16 })} Ekspor CSV</button>
+  </div>
+  <div class="flex flex-wrap gap-2 mb-4">
+    <div class="relative flex-1 min-w-[180px]">
+      ${icon("search", { size: 15, className: "absolute left-3 top-2.5 text-slate-400" })}
+      <input id="daftar-search" value="${escapeHtml(state.daftar.query)}" placeholder="Cari nama usaha…" class="w-full border border-[var(--border)] bg-[var(--surface)] text-[var(--ink)] rounded-xl pl-9 pr-3 py-2 text-sm">
+    </div>
+    <select id="daftar-filter" class="border border-[var(--border)] bg-[var(--surface)] text-[var(--ink)] rounded-xl px-3 py-2 text-sm">
+      <option value="semua" ${state.daftar.filter === "semua" ? "selected" : ""}>Semua Kategori</option>
+      <option value="tinggi" ${state.daftar.filter === "tinggi" ? "selected" : ""}>Layak Tinggi</option>
+      <option value="bersyarat" ${state.daftar.filter === "bersyarat" ? "selected" : ""}>Layak Bersyarat</option>
+      <option value="belum" ${state.daftar.filter === "belum" ? "selected" : ""}>Belum Layak</option>
+    </select>
+    <select id="daftar-sort" class="border border-[var(--border)] bg-[var(--surface)] text-[var(--ink)] rounded-xl px-3 py-2 text-sm">
+      <option value="skor-desc" ${state.daftar.sort === "skor-desc" ? "selected" : ""}>Skor Tertinggi</option>
+      <option value="skor-asc" ${state.daftar.sort === "skor-asc" ? "selected" : ""}>Skor Terendah</option>
+      <option value="nama" ${state.daftar.sort === "nama" ? "selected" : ""}>Nama A-Z</option>
+    </select>
+  </div>
+  ${card(`<div id="daftar-table-wrap" class="overflow-x-auto">${daftarTableHtml(data)}</div>`)}`;
+}
+
+function screenLembagaKalkulator() {
+  const k = state.kalkulator;
+  const result = computeKalkulator(k, state.weights);
+  return `${sectionTitle("Simulasi Kalkulator Skor", "Input manual variabel transaksi — sistem menghitung skor komposit secara real-time (implementasi langsung Sub-bab 4.2.2).", "Layer 3 · Fitur Unggulan")}
+  <div class="grid md:grid-cols-2 gap-5">
+    ${card(`<div class="p-5 space-y-4">
+      ${sliderFieldHtml("kal-freq", "Frekuensi Transaksi (kali/bulan)", k.freq, 50, 1500, 10, null)}
+      ${sliderFieldHtml("kal-nominal", "Nominal Transaksi/bulan (Rp)", k.nominal, 3000000, 45000000, 100000, "rupiah")}
+      ${sliderFieldHtml("kal-growth", "Pertumbuhan Omzet MoM (%)", k.growth, -10, 20, 0.1, "percent")}
+      ${sliderFieldHtml("kal-cv", "Coefficient of Variation (CV)", k.cv, 0.1, 0.9, 0.01, null)}
+    </div>`)}
+    ${card(`<div class="p-5 flex flex-col items-center justify-center" id="kalk-result-wrap">${kalkulatorResultHtml(result)}</div>`)}
+  </div>`;
+}
+
+function kalkulatorResultHtml(result) {
+  return `${arcGaugeSvg(result.S, result.kategori, 220, "kalk-gauge")}
+    ${badge(result.kategori)}
+    <div class="grid grid-cols-3 gap-2 w-full mt-4 text-center">
+      <div><p class="text-[11px] text-slate-400">X1_norm</p><p class="font-mono font-bold text-[var(--ink)]" id="kalk-x1">${result.x1.toFixed(1)}</p></div>
+      <div><p class="text-[11px] text-slate-400">X2_norm</p><p class="font-mono font-bold text-[var(--ink)]" id="kalk-x2">${result.x2.toFixed(1)}</p></div>
+      <div><p class="text-[11px] text-slate-400">X3_norm</p><p class="font-mono font-bold text-[var(--ink)]" id="kalk-x3">${result.x3.toFixed(1)}</p></div>
+    </div>`;
+}
+
+function sliderFieldHtml(id, label, value, min, max, step, fmt) {
+  const display = fmt === "rupiah" ? QSData.formatRupiah(value) : fmt === "percent" ? value + "%" : value;
+  return `<div>
+    <div class="flex justify-between text-xs mb-1.5"><span class="text-[var(--muted)]">${label}</span><span class="font-mono font-semibold text-[var(--ink)]" id="${id}-val">${display}</span></div>
+    <input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${value}" class="w-full accent-amber-500">
+  </div>`;
+}
+
+function computeKalkulator(input, weights) {
+  const all = QSData.RAW_UMKM;
+  const freqR = { min: Math.min(input.freq, ...all.map((u) => u.freq)), max: Math.max(input.freq, ...all.map((u) => u.freq)) };
+  const nomR = { min: Math.min(input.nominal, ...all.map((u) => u.nominal)), max: Math.max(input.nominal, ...all.map((u) => u.nominal)) };
+  const growR = { min: Math.min(input.growth, ...all.map((u) => u.growth)), max: Math.max(input.growth, ...all.map((u) => u.growth)) };
+  const cvR = { min: Math.min(input.cv, ...all.map((u) => u.cv)), max: Math.max(input.cv, ...all.map((u) => u.cv)) };
+  const x1 = ((input.freq - freqR.min) / (freqR.max - freqR.min || 1)) * 100;
+  const omzetN = ((input.nominal - nomR.min) / (nomR.max - nomR.min || 1)) * 100;
+  const growN = ((input.growth - growR.min) / (growR.max - growR.min || 1)) * 100;
+  const x2 = 0.7 * omzetN + 0.3 * growN;
+  const x3 = 100 - ((input.cv - cvR.min) / (cvR.max - cvR.min || 1)) * 100;
+  const S = weights.w1 * x1 + weights.w2 * x2 + weights.w3 * x3;
+  const kategori = S >= 70 ? "tinggi" : S >= 40 ? "bersyarat" : "belum";
+  return { x1, x2, x3, S, kategori };
+}
+
+function screenLembagaAnalitik(data) {
+  const cakupan = state.cakupan;
+  const totalUMKMKuliner = 21186;
+  const proyeksi = Math.round(totalUMKMKuliner * (cakupan / 100));
+  const npl = (0.2 + ((cakupan - 15) / 5) * 0.2).toFixed(2);
+  const avgSkor = data.reduce((a, d) => a + d.skor, 0) / data.length;
+  return `<div class="flex items-center justify-between flex-wrap gap-3">
+    ${sectionTitle("Analitik & Laporan", "Distribusi skor, tren rata-rata, dan proyeksi dampak implementasi (Sub-bab 4.5.3 KTI).")}
+    <button data-action="downloadPortofolioPdf" class="flex items-center gap-1.5 text-sm font-medium border border-[var(--border)] rounded-xl px-3.5 py-2 hover:bg-slate-500/10 h-fit">${icon("fileDown", { size: 16 })} Unduh Laporan PDF</button>
+  </div>
+  <div class="grid md:grid-cols-2 gap-5 mb-5">
+    ${card(`<div class="p-5"><h3 class="font-semibold text-sm text-[var(--ink)] mb-3">Distribusi Skor 10 UMKM Kuliner</h3>${barHistogramSvg(data)}</div>`)}
+    ${card(`<div class="p-5"><h3 class="font-semibold text-sm text-[var(--ink)] mb-3">Tren Rata-rata Skor per Bulan (dummy)</h3>${lineTrendSvg([{ bulan: "Feb", omzet: 41 }, { bulan: "Mar", omzet: 43 }, { bulan: "Apr", omzet: 44.5 }, { bulan: "Mei", omzet: 46 }, { bulan: "Jun", omzet: 47.2 }, { bulan: "Jul", omzet: avgSkor }], "tinggi")}</div>`)}
+  </div>
+  ${card(`<div class="p-5">
+    <h3 class="font-semibold text-sm text-[var(--ink)] mb-1 flex items-center gap-2">${icon("bolt", { size: 16, className: "text-amber-500" })} Simulasi Proyeksi Dampak Implementasi</h3>
+    <p class="text-xs text-[var(--muted)] mb-4">Ilustrasi konservatif berdasarkan preseden literatur (bukan hasil pengukuran empiris) — Sub-bab 4.5.3 KTI.</p>
+    ${sliderFieldHtml("cakupan-slider", "Asumsi cakupan UMKM kuliner berprofil Layak Tinggi/Bersyarat (dari 21.186 UMKM Kota Jambi)", cakupan, 10, 25, 0.5, "percent")}
+    <div class="grid grid-cols-2 gap-3 mt-4" id="dampak-result">
+      <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-center">
+        <p class="text-xs text-emerald-700 mb-1">Potensi UMKM terjangkau pembiayaan awal</p>
+        <p class="font-mono text-2xl font-bold text-emerald-700" id="dampak-umkm">~${proyeksi.toLocaleString("id-ID")}</p>
+      </div>
+      <div class="bg-sky-50 border border-sky-200 rounded-xl p-4 text-center">
+        <p class="text-xs text-sky-700 mb-1">Potensi penurunan NPL (poin persentase)</p>
+        <p class="font-mono text-2xl font-bold text-sky-700" id="dampak-npl">${npl} pp</p>
+      </div>
+    </div>
+  </div>`)}`;
+}
+
+function screenLembagaBobot() {
+  const w = state.weights;
+  return `${sectionTitle("Pengaturan Bobot Variabel", "Kalibrasi ulang bobot 25:50:25 secara interaktif — seluruh skor UMKM ikut ter-update (prinsip auditable & mudah dikalibrasi).", "Fitur Unggulan · Sub-bab 4.2.1")}
+  ${card(`<div class="p-5 max-w-xl space-y-5">
+    ${sliderFieldHtml("bobot-w1", "Bobot Frekuensi Transaksi (X1)", Math.round(w.w1 * 100), 0, 100, 1, "percent")}
+    ${sliderFieldHtml("bobot-w2", "Bobot Nominal & Pertumbuhan Omzet (X2)", Math.round(w.w2 * 100), 0, 100, 1, "percent")}
+    ${sliderFieldHtml("bobot-w3", "Bobot Konsistensi Transaksi (X3)", Math.round(w.w3 * 100), 0, 100, 1, "percent")}
+    <p class="text-xs text-slate-400">Total bobot otomatis dinormalisasi ke 100% agar formula S tetap valid.</p>
+    <button data-action="resetBobot" class="text-sm font-medium text-amber-600 border border-amber-200 rounded-xl px-4 py-2 hover:bg-amber-50">Kembalikan ke Default</button>
+  </div>`)}`;
+}
+
+function tplDetailDebiturModal(d) {
+  const rek = QSData.rekomendasi(d);
+  const app = state.applications[d.id];
+  return `<div class="fixed inset-0 z-[90] flex items-end md:items-center justify-center bg-[#0f1c3f]/50 backdrop-blur-sm p-0 md:p-4" data-action="closeModal">
+    <div class="bg-[var(--surface)] w-full md:max-w-md md:rounded-2xl rounded-t-3xl p-6 max-h-[88vh] overflow-y-auto" onclick="event.stopPropagation()">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="font-semibold text-[var(--ink)] text-lg" style="font-family:'Space Grotesk',sans-serif">${escapeHtml(d.nama)}</h3>
+        <button type="button" onclick="event.stopPropagation(); closeDetailModal();" class="text-slate-400 hover:text-[var(--ink)]">${icon("x", { size: 20 })}</button>
+      </div>
+      <div class="flex items-center gap-3 mb-4">
+        ${arcGaugeSvg(d.skor, d.kategoriColor, 140)}
+        <div>${badge(d.kategoriColor)}<p class="text-xs text-[var(--muted)] mt-2">${escapeHtml(d.jenisUsaha)} · Kota Jambi</p></div>
+      </div>
+      <div class="grid grid-cols-3 gap-2 mb-4">
+        ${varMini("X1", d.x1norm, `${d.freq}x/bln`, d.kategoriColor)}
+        ${varMini("X2", d.x2norm, QSData.formatRupiah(d.nominal), d.kategoriColor)}
+        ${varMini("X3", d.x3norm, `CV ${d.cv}`, d.kategoriColor)}
+      </div>
+      <div class="mb-4">${lineTrendSvg(d.history, d.kategoriColor)}</div>
+      <div class="mb-4">
+        <p class="text-xs font-semibold text-[var(--muted)] mb-2">Rekomendasi bagi UMKM</p>
+        ${rek.slice(0, 3).map((r) => `<p class="text-xs text-[var(--muted)] mb-1">• ${escapeHtml(r.text)}</p>`).join("")}
+      </div>
+      <div class="flex gap-2">
+        <button type="button" onclick="event.stopPropagation(); setDebiturStatus('${d.id}','Disetujui');" class="flex-1 bg-emerald-500 text-white rounded-xl py-2 text-xs font-semibold hover:bg-emerald-600">Setujui Pembiayaan</button>
+        <button type="button" onclick="event.stopPropagation(); setDebiturStatus('${d.id}','Diminta Data Tambahan');" class="flex-1 bg-amber-500 text-white rounded-xl py-2 text-xs font-semibold hover:bg-amber-600">Minta Data</button>
+        <button type="button" onclick="event.stopPropagation(); setDebiturStatus('${d.id}','Ditolak');" class="flex-1 bg-rose-500 text-white rounded-xl py-2 text-xs font-semibold hover:bg-rose-600">Tolak</button>
+      </div>
+      ${app ? `<p class="text-center text-[11px] text-slate-400 mt-3">Status saat ini: ${app.status}</p>` : ""}
+    </div>
+  </div>`;
+}
+
+function closeDetailModal() {
+  state.selectedId = null;
+  render();
+}
+
+function setDebiturStatus(id, status) {
+  const prev = state.applications[id] || { jumlah: 10000000, tujuan: "-", tanggal: "24 Jul 2026" };
+  state.applications[id] = Object.assign({}, prev, { status });
+  const data = getData();
+  const d = data.find((x) => x.id === id);
+  render();
+  notify(`Status ${d ? d.nama : id} diperbarui: ${status}`);
+}
+
+/* ================= SHARED PAGES ================= */
+
+function screenTentang(showBack) {
+  const nodes = [
+    { id: "merchant", label: "Merchant QRIS", desc: "Transaksi QRIS tercipta di titik merchant UMKM kuliner." },
+    { id: "pjp", label: "PJP / Switching", desc: "Data transaksi diteruskan oleh Penyelenggara Jasa Pembayaran melalui lembaga switching." },
+    { id: "agregasi", label: "Agregasi & Anonimisasi", desc: "Identitas pribadi dihilangkan; hanya variabel agregat (frekuensi, nominal, growth, CV) yang tersisa (prinsip UU PDP)." },
+    { id: "mesin", label: "Mesin Skoring QRIS-SCORE", desc: "Data agregat dihitung menjadi skor komposit 0-100 memakai formula rule-based transparan." },
+    { id: "output", label: "Output ke Lembaga Keuangan", desc: "Skor & kategori kelayakan disalurkan sebagai salah satu input pertimbangan pembiayaan." },
+  ];
+  const active = nodes.find((n) => n.id === state.activeTentangNode);
+  const header = showBack ? topBar("Tentang QRIS-SCORE", { onBackAction: "backToProfil" }) : sectionTitle("Tentang QRIS-SCORE & Alur Data", "Klik tiap tahap untuk melihat penjelasannya (Sub-bab 4.5.1 & Gambar 4.2 KTI).");
+  return `${header}
+  <div class="${showBack ? "p-4" : ""} max-w-3xl mx-auto">
+    <div class="flex flex-col md:flex-row gap-2 md:gap-0 md:items-center">
+      ${nodes.map((n, i) => `<button data-action="selectTentangNode" data-node="${n.id}" class="flex-1 text-left md:text-center border-2 rounded-2xl p-3.5 transition-colors ${state.activeTentangNode === n.id ? "border-amber-400 bg-amber-50" : "border-[var(--border)] bg-[var(--surface)] hover:border-slate-300"}">
+        <p class="text-xs font-semibold text-[var(--ink)]">${n.label}</p>
+      </button>${i < nodes.length - 1 ? `<div class="hidden md:block text-slate-300 px-1">${icon("chevron", { size: 16 })}</div>` : ""}`).join("")}
+    </div>
+    ${card(`<div class="p-4 min-h-[70px]"><p class="text-sm text-[var(--muted)]">${active ? active.desc : "Pilih salah satu tahap di atas untuk melihat penjelasannya."}</p></div>`, "mt-4")}
+    ${sectionTitle("Skema Kolaborasi Kelembagaan")}
+    <div class="grid md:grid-cols-2 gap-3">
+      ${QSData.STAKEHOLDERS.map((s) => card(`<div class="p-4"><p class="font-semibold text-sm text-[var(--ink)] mb-1">${s.nama}</p><p class="text-xs text-[var(--muted)] leading-relaxed">${s.peran}</p></div>`)).join("")}
+    </div>
+    ${card(`<div class="p-4"><p class="text-xs text-[var(--muted)] leading-relaxed"><b>Catatan dataset:</b> 6 dari 10 UMKM pada purwarupa ini adalah data representatif Tabel 4.3 KTI QRIS-SCORE. 4 UMKM lainnya adalah data dummy tambahan yang disusun mengikuti pola & rentang yang sama, untuk melengkapi kebutuhan interaktif purwarupa (dataset lengkap 10 UMKM ada di Lampiran A/B naskah).</p></div>`, "mt-4 border-dashed")}
+  </div>`;
+}
+
+function screenFAQ(showBack) {
+  const header = showBack ? topBar("Bantuan / FAQ", { onBackAction: "backToProfil" }) : sectionTitle("Bantuan / FAQ");
+  return `${header}
+  <div class="${showBack ? "p-4" : ""} max-w-2xl mx-auto">
+    <div class="space-y-2">
+      ${QSData.FAQ.map((f, i) => card(`<button data-action="toggleFaq" data-i="${i}" class="w-full flex items-center justify-between px-4 py-3.5 text-left">
+        <span class="text-sm font-medium text-[var(--ink)]">${f.q}</span>
+        ${icon("down", { size: 16, className: `text-slate-400 shrink-0 ml-2 transition-transform ${state.openFaq === i ? "rotate-180" : ""}` })}
+      </button>${state.openFaq === i ? `<div class="px-4 pb-4 text-sm text-[var(--muted)] leading-relaxed">${f.a}</div>` : ""}`, "overflow-hidden")).join("")}
+    </div>
+  </div>`;
+}
+
+const SHOWCASE_SHOTS_LEMBAGA = [
+  { t: "Ringkasan Portofolio", d: "Rekap real-time seluruh UMKM & rata-rata skor", screen: "ringkasan", icon: "home", c: "from-emerald-100 to-emerald-50" },
+  { t: "Daftar Pengajuan & Filter", d: "Cari, filter, urutkan, dan tinjau tiap debitur", screen: "daftar", icon: "list", c: "from-rose-100 to-rose-50" },
+  { t: "Simulasi Kalkulator Skor", d: "Hitung skor komposit real-time dari input manual", screen: "kalkulator", icon: "sliders", c: "from-amber-100 to-amber-50" },
+  { t: "Pengaturan Bobot Interaktif", d: "Kalibrasi ulang bobot 25:50:25 secara live", screen: "bobot", icon: "sliders", c: "from-slate-100 to-slate-50" },
+  { t: "Analitik & Proyeksi Dampak", d: "Distribusi skor & simulasi dampak implementasi", screen: "analitik", icon: "chart", c: "from-sky-100 to-sky-50" },
+  { t: "Tentang Sistem & Alur Data", d: "Alur data end-to-end & skema kolaborasi kelembagaan", screen: "tentang", icon: "info", c: "from-emerald-100 to-emerald-50" },
+  { t: "Bantuan / FAQ", d: "Pertanyaan umum seputar QRIS-SCORE", screen: "faq", icon: "help", c: "from-amber-100 to-amber-50" },
+];
+const SHOWCASE_SHOTS_UMKM = [
+  { t: "Dashboard Skor UMKM", d: "Gauge skor, kategori, & tren omzet 6 bulan", screen: "dashboard", icon: "home", c: "from-amber-100 to-amber-50" },
+  { t: "Detail Rincian Skor", d: "Rincian perhitungan & rekomendasi peningkatan skor", screen: "detail-skor", icon: "chart", c: "from-slate-100 to-slate-50" },
+  { t: "Riwayat Transaksi", d: "Riwayat transaksi QRIS harian", screen: "riwayat", icon: "history", c: "from-sky-100 to-sky-50" },
+  { t: "Ajukan Pembiayaan", d: "Form pengajuan pembiayaan ke lembaga mitra", screen: "ajukan", icon: "send", c: "from-rose-100 to-rose-50" },
+  { t: "Edukasi", d: "Video & artikel literasi keuangan digital", screen: "edukasi", icon: "book", c: "from-emerald-100 to-emerald-50" },
+  { t: "Tentang Sistem & Alur Data", d: "Alur data end-to-end & skema kolaborasi kelembagaan", screen: "tentang", icon: "info", c: "from-slate-100 to-slate-50" },
+  { t: "Bantuan / FAQ", d: "Pertanyaan umum seputar QRIS-SCORE", screen: "faq", icon: "help", c: "from-amber-100 to-amber-50" },
+];
+
+function screenShowcase(showBack) {
+  const shots = state.role === "umkm" ? SHOWCASE_SHOTS_UMKM : SHOWCASE_SHOTS_LEMBAGA;
+  const header = showBack ? topBar("Showcase Gallery", { onBackAction: "backToProfil" }) : sectionTitle("Showcase Gallery", "Klik kartu untuk langsung membuka tampilan aslinya di dalam aplikasi ini — bukan gambar statis.");
+  return `${header}
+  <div class="${showBack ? "p-4" : ""} max-w-4xl mx-auto">
+    <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
+      ${shots.map((s) => `<button data-action="setScreen" data-screen="${s.screen}" class="text-left aspect-[9/16] rounded-2xl bg-gradient-to-br ${s.c} border border-[var(--border)] flex flex-col justify-between p-3 hover:shadow-lg hover:-translate-y-0.5 transition-all">
+        <div class="w-8 h-8 rounded-lg bg-white/70 text-[#0f1c3f] flex items-center justify-center">${icon(s.icon, { size: 16 })}</div>
+        <div>
+          <p class="text-xs font-semibold text-[#0f1c3f]">${s.t}</p>
+          <p class="text-[10px] text-[#0f1c3f]/60 mt-0.5 leading-snug">${s.d}</p>
+          <p class="text-[10px] font-semibold text-[#0f1c3f] mt-2 flex items-center gap-1">Buka tampilan ${icon("chevron", { size: 11 })}</p>
+        </div>
+      </button>`).join("")}
+    </div>
+  </div>`;
+}
+
+/* ================= PDF EXPORT ================= */
+
+function pdfHeader(doc, title, subtitle) {
+  doc.setFillColor(15, 28, 63);
+  doc.rect(0, 0, 210, 28, "F");
+  doc.setTextColor(255, 255, 255);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(16);
+  doc.text("QRIS-SCORE", 14, 13);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(9);
+  doc.text("Purwarupa Alternative Credit Scoring — Jambi Spark 2026", 14, 19);
+  doc.setTextColor(30, 41, 63);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(13);
+  doc.text(title, 14, 38);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(9.5);
+  doc.setTextColor(100, 116, 139);
+  doc.text(subtitle, 14, 44);
+  return 52;
+}
+function pdfFooter(doc) {
+  const pages = doc.internal.getNumberOfPages();
+  for (let i = 1; i <= pages; i++) {
+    doc.setPage(i);
+    doc.setFontSize(8); doc.setTextColor(148, 163, 184);
+    doc.text("Dihasilkan otomatis oleh purwarupa QRIS-SCORE · data bersifat simulasi/dummy untuk keperluan kompetisi.", 14, 289);
+    doc.text(`Halaman ${i}/${pages}`, 190, 289, { align: "right" });
+  }
+}
+function downloadSkorPdf() {
+  const data = getData();
+  const me = getMe(data);
+  const rek = QSData.rekomendasi(me);
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  let y = pdfHeader(doc, "Laporan Kelayakan Skor UMKM", `${me.nama} · ${me.jenisUsaha} · Kota Jambi`);
+  doc.setFontSize(11); doc.setTextColor(30, 41, 63); doc.setFont("helvetica", "bold");
+  doc.text(`Skor Komposit: ${me.skor.toFixed(1)} / 100`, 14, y); y += 6;
+  doc.text(`Kategori Kelayakan: ${me.kategori}`, 14, y); y += 10;
+  doc.setFont("helvetica", "bold"); doc.setFontSize(10.5);
+  doc.text("Rincian Variabel", 14, y); y += 6;
+  doc.setFont("helvetica", "normal"); doc.setFontSize(9.5);
+  [
+    [`Frekuensi Transaksi (X1) — bobot 25%`, `${me.x1norm.toFixed(1)}`, `${me.freq}x/bulan`],
+    [`Nominal & Pertumbuhan Omzet (X2) — bobot 50%`, `${me.x2norm.toFixed(1)}`, `${QSData.formatRupiah(me.nominal)} (${me.growth > 0 ? "+" : ""}${me.growth}% MoM)`],
+    [`Konsistensi Transaksi (X3) — bobot 25%`, `${me.x3norm.toFixed(1)}`, `CV ${me.cv}`],
+  ].forEach((r) => {
+    doc.setFont("helvetica", "bold"); doc.text(r[0], 14, y);
+    doc.setFont("helvetica", "normal"); doc.text(r[1], 145, y); doc.text(r[2], 160, y);
+    y += 6;
+  });
+  y += 4;
+  doc.setFont("helvetica", "bold"); doc.setFontSize(10.5);
+  doc.text("Langkah Perhitungan (Transparan & Auditable)", 14, y); y += 6;
+  doc.setFont("courier", "normal"); doc.setFontSize(8.5); doc.setTextColor(71, 85, 105);
+  [
+    `X1_norm = ${me.x1norm}  (min-max dari frekuensi ${me.freq}x/bulan)`,
+    `Omzet_norm = ${me.omzetNorm}, Growth_norm = ${me.growthNorm}`,
+    `X2_norm = 0.7 x ${me.omzetNorm} + 0.3 x ${me.growthNorm} = ${me.x2norm}`,
+    `X3_norm = 100 - minmax(CV ${me.cv}) = ${me.x3norm}`,
+    `S = 0.25 x ${me.x1norm} + 0.5 x ${me.x2norm} + 0.25 x ${me.x3norm} = ${me.skor}`,
+  ].forEach((m) => { doc.text(m, 14, y); y += 5; });
+  y += 6;
+  doc.setFont("helvetica", "bold"); doc.setFontSize(10.5); doc.setTextColor(30, 41, 63);
+  doc.text("Rekomendasi Peningkatan Skor", 14, y); y += 6;
+  doc.setFont("helvetica", "normal"); doc.setFontSize(9.5); doc.setTextColor(51, 65, 85);
+  rek.forEach((r) => {
+    const lines = doc.splitTextToSize(`• ${r.text}`, 180);
+    doc.text(lines, 14, y); y += lines.length * 5 + 1.5;
+  });
+  pdfFooter(doc);
+  doc.save(`Laporan-Skor-${me.nama.replace(/\s+/g, "-")}.pdf`);
+  notify("Laporan skor (PDF) diunduh.");
+}
+function downloadPortofolioPdf() {
+  const data = getData();
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const tinggi = data.filter((d) => d.kategoriColor === "tinggi").length;
+  const bersyarat = data.filter((d) => d.kategoriColor === "bersyarat").length;
+  const belum = data.filter((d) => d.kategoriColor === "belum").length;
+  const avg = data.reduce((a, d) => a + d.skor, 0) / data.length;
+  let y = pdfHeader(doc, "Laporan Ringkasan Portofolio", "Dashboard Lembaga Keuangan/Koperasi Mitra — Provinsi Jambi");
+  doc.setFontSize(9.5); doc.setTextColor(30, 41, 63); doc.setFont("helvetica", "normal");
+  doc.text(`Total pengajuan: ${data.length}   |   Layak Tinggi: ${tinggi}   |   Layak Bersyarat: ${bersyarat}   |   Belum Layak: ${belum}   |   Rata-rata skor: ${avg.toFixed(1)}`, 14, y);
+  y += 10;
+  doc.setFont("helvetica", "bold"); doc.setFontSize(10);
+  ["Nama Usaha", "Skor", "Kategori", "Freq.", "Nominal/bln", "CV"].forEach((h, i) => doc.text(h, 14 + [0, 70, 90, 120, 140, 175][i], y));
+  y += 2; doc.setDrawColor(226, 232, 240); doc.line(14, y, 196, y); y += 5;
+  doc.setFont("helvetica", "normal"); doc.setFontSize(9);
+  data.forEach((d) => {
+    doc.text(d.nama.length > 28 ? d.nama.slice(0, 26) + "…" : d.nama, 14, y);
+    doc.text(String(d.skor.toFixed(1)), 70, y);
+    doc.text(d.kategori, 90, y);
+    doc.text(String(d.freq), 120, y);
+    doc.text(QSData.formatRupiah(d.nominal), 140, y);
+    doc.text(String(d.cv), 175, y);
+    y += 6;
+  });
+  pdfFooter(doc);
+  doc.save("Laporan-Portofolio-QRIS-SCORE.pdf");
+  notify("Laporan portofolio (PDF) diunduh.");
+}
+function exportCsv() {
+  const data = getData();
+  const header = "Nama Usaha,Kategori,Skor,X1_norm,X2_norm,X3_norm,Frekuensi,Nominal,Growth%,CV\n";
+  const body = data.map((d) => [d.nama, d.kategori, d.skor, d.x1norm, d.x2norm, d.x3norm, d.freq, d.nominal, d.growth, d.cv].join(",")).join("\n");
+  const blob = new Blob([header + body], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = "qris-score-pengajuan.csv"; a.click();
+  URL.revokeObjectURL(url);
+  notify("Laporan CSV diunduh.");
+}
+
+/* ================= ACTION DISPATCH (event delegation) ================= */
+
+function handleAction(action, ds) {
+  switch (action) {
+    case "goRole": goRole(ds.role); break;
+    case "goDemoLogin": goDemoLogin(); break;
+    case "connectProvider":
+      state.selectedPjp = ds.pjp; state.connectStep = "consent"; render(); break;
+    case "connectSubmit":
+      if (state.consent) { state.connectStep = "loading"; render(); } break;
+    case "connectDone":
+      state.stage = "app"; state.role = "umkm"; state.screen = "dashboard";
+      render(); notify("Selamat datang! Skor kamu sudah siap dilihat."); break;
+    case "setScreen": setScreen(ds.screen); break;
+    case "backToDashboard": state.screen = "dashboard"; render(); break;
+    case "backToProfil": state.screen = "profil"; render(); break;
+    case "switchRole": switchRole(); break;
+    case "toggleDrawer": state.drawerOpen = !state.drawerOpen; render(); break;
+    case "toggleDark": state.darkMode = !state.darkMode; render(); break;
+    case "toggleMath": state.showMath = !state.showMath; render(); break;
+    case "selectTentangNode": state.activeTentangNode = ds.node; render(); break;
+    case "toggleFaq": {
+      const i = Number(ds.i);
+      state.openFaq = state.openFaq === i ? null : i;
+      render(); break;
+    }
+    case "ajukanSubmit": {
+      const data = getData(); const me = getMe(data);
+      const jumlah = Number(document.getElementById("ajukan-jumlah").value || 0);
+      const tujuan = document.getElementById("ajukan-tujuan").value || "";
+      state.applications[me.id] = { jumlah, tujuan, status: "Menunggu Review Lembaga Keuangan", tanggal: "24 Jul 2026" };
+      render(); notify("Pengajuan terkirim ke Dashboard Lembaga Keuangan."); break;
+    }
+    case "downloadSkorPdf": downloadSkorPdf(); break;
+    case "downloadPortofolioPdf": downloadPortofolioPdf(); break;
+    case "exportCsv": exportCsv(); break;
+    case "openDaftarFromRingkasan":
+      state.screen = "daftar"; state.selectedId = ds.id; render(); break;
+    case "selectUmkm":
+      state.selectedId = state.selectedId === ds.id ? null : ds.id; render(); break;
+    case "closeModal": closeDetailModal(); break;
+    case "setStatus": setDebiturStatus(ds.id, ds.status); break;
+    case "resetBobot":
+      state.weights = { w1: 0.25, w2: 0.5, w3: 0.25 };
+      render(); notify("Bobot dikembalikan ke default 25:50:25."); break;
+    default: break;
+  }
+}
+
+document.addEventListener("click", function (e) {
+  const el = e.target.closest("[data-action]");
+  if (!el) return;
+  handleAction(el.dataset.action, el.dataset);
+});
+
+/* ---- Discrete change events (select/checkbox) -> full render is fine ---- */
+document.addEventListener("change", function (e) {
+  const el = e.target;
+  if (el.id === "consent-checkbox") { state.consent = el.checked; render(); return; }
+  if (el.id === "daftar-filter") { state.daftar.filter = el.value; renderDaftarTableOnly(); return; }
+  if (el.id === "daftar-sort") { state.daftar.sort = el.value; renderDaftarTableOnly(); return; }
+});
+
+/* ---- Continuous input events (sliders/search) -> TARGETED update only,
+        never full render(), so the element being interacted with is never
+        destroyed mid-drag / mid-keystroke. ---- */
+document.addEventListener("input", function (e) {
+  const el = e.target;
+
+  if (el.id === "daftar-search") { state.daftar.query = el.value; renderDaftarTableOnly(); return; }
+
+  if (["kal-freq", "kal-nominal", "kal-growth", "kal-cv"].includes(el.id)) {
+    updateKalkulatorLive();
+    return;
+  }
+
+  if (["bobot-w1", "bobot-w2", "bobot-w3"].includes(el.id)) {
+    updateBobotLive(el.id, Number(el.value));
+    return;
+  }
+
+  if (el.id === "cakupan-slider") {
+    updateDampakLive(Number(el.value));
+    return;
+  }
+});
+
+function renderDaftarTableOnly() {
+  const wrap = document.getElementById("daftar-table-wrap");
+  if (!wrap) return;
+  const data = getData();
+  wrap.innerHTML = daftarTableHtml(data);
+}
+
+function updateKalkulatorLive() {
+  const freq = Number(document.getElementById("kal-freq").value);
+  const nominal = Number(document.getElementById("kal-nominal").value);
+  const growth = Number(document.getElementById("kal-growth").value);
+  const cv = Number(document.getElementById("kal-cv").value);
+  state.kalkulator = { freq, nominal, growth, cv };
+  document.getElementById("kal-freq-val").textContent = freq;
+  document.getElementById("kal-nominal-val").textContent = QSData.formatRupiah(nominal);
+  document.getElementById("kal-growth-val").textContent = growth + "%";
+  document.getElementById("kal-cv-val").textContent = cv;
+  const result = computeKalkulator(state.kalkulator, state.weights);
+  const wrap = document.getElementById("kalk-result-wrap");
+  if (wrap) wrap.innerHTML = kalkulatorResultHtml(result);
+}
+
+function updateBobotLive(changedId, changedVal) {
+  const keyMap = { "bobot-w1": "w1", "bobot-w2": "w2", "bobot-w3": "w3" };
+  const key = keyMap[changedId];
+  const rest = 100 - changedVal;
+  const others = Object.keys(state.weights).filter((k) => k !== key);
+  const otherSum = others.reduce((a, k) => a + state.weights[k] * 100, 0) || 1;
+  const next = Object.assign({}, state.weights);
+  next[key] = changedVal / 100;
+  others.forEach((k) => { next[k] = (state.weights[k] * 100 / otherSum) * rest / 100; });
+  state.weights = next;
+
+  // Update this slider's own label
+  document.getElementById(changedId + "-val").textContent = changedVal + "%";
+  // Update the OTHER two sliders' value + label WITHOUT touching the one being dragged
+  others.forEach((k) => {
+    const idFor = Object.keys(keyMap).find((idk) => keyMap[idk] === k);
+    const pct = Math.round(next[k] * 100);
+    const rangeEl = document.getElementById(idFor);
+    const labelEl = document.getElementById(idFor + "-val");
+    if (rangeEl) rangeEl.value = pct;
+    if (labelEl) labelEl.textContent = pct + "%";
+  });
+}
+
+function updateDampakLive(cakupan) {
+  state.cakupan = cakupan;
+  const totalUMKMKuliner = 21186;
+  const proyeksi = Math.round(totalUMKMKuliner * (cakupan / 100));
+  const npl = (0.2 + ((cakupan - 15) / 5) * 0.2).toFixed(2);
+  document.getElementById("cakupan-slider-val").textContent = cakupan + "%";
+  document.getElementById("dampak-umkm").textContent = "~" + proyeksi.toLocaleString("id-ID");
+  document.getElementById("dampak-npl").textContent = npl + " pp";
+}
+
+/* ================= INIT ================= */
+function initApp() {
+  render();
+}
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initApp);
+} else {
+  initApp();
+}
+
+  </script>
+</body>
+</html>
